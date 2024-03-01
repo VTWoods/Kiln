@@ -14,7 +14,7 @@ var (
 )
 
 type RecipeServer struct {
-	recipepb.UnimplementedGreeterServer
+	recipepb.UnimplementedRecipeServiceServer
 }
 
 func main() {
