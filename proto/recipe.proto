@@ -9,7 +9,7 @@ message Recipe {
 // The greeting service definition.
 service RecipeService {
     // Sends a greeting
-    rpc SayHello (ListRecipesRequest) returns (ListRecipesResponse) {}
+    rpc ListRecipes (ListRecipesRequest) returns (ListRecipesResponse) {}
   }
 
   message ListRecipesRequest {
