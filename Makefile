@@ -10,4 +10,5 @@ run_server: compile_pb
 	cd go; go run main.go
 
 compile_pb:
-	protoc -I=proto --go_opt=paths=source_relative --go_out=go/proto --go-grpc_out=go/proto --go-grpc_opt=paths=source_relative proto/recipe.proto
+	rm go/proto/*
+	protoc -I=proto --go_opt=paths=source_relative --go_out=go/proto --go-grpc_out=go/proto --go-grpc_opt=paths=source_relative proto/*

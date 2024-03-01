@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+option go_package = "github.com/vtwoods/kiln/proto/recipepb";
+
+message Recipe {
+string title = 1;
+}
+
+message ListRecipesRequest {
+}  
+
+message ListRecipesResponse {
+  repeated Recipe recipes = 1;
+}
+
+message AddRecipeRequest {
+  Recipe recipe = 1;
+}  
+
+message AddRecipeResponse {
+  int32 recipe = 1;
+}
+
+// The greeting service definition.
+service RecipeService {
+  // List all recipes
+  rpc ListRecipes (ListRecipesRequest) returns (ListRecipesResponse) {}
+
+  // Add a Recipe
+  rpc AddRecipe (AddRecipeRequest) returns (AddRecipeResponse) {}
+}

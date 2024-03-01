@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 
-	recipepb "github.com/VTWoods/kiln/proto"
+	"github.com/VTWoods/kiln/recipe"
 	_ "github.com/mattn/go-sqlite3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -18,14 +17,6 @@ var (
 	databaseFile = flag.String("sqlite_db", "bin/kiln.db", "SQLite database file.")
 	serverPort   = flag.Int("server_port", 7070, "GRPC server Port.")
 )
-
-type recipeServer struct {
-	recipepb.UnimplementedRecipeServiceServer
-}
-
-func (s *recipeServer) ListRecipes(ctx context.Context, request *recipepb.ListRecipesRequest) (*recipepb.ListRecipesResponse, error) {
-	return &recipepb.ListRecipesResponse{}, nil
-}
 
 func main() {
 	flag.Parse()
@@ -41,7 +32,7 @@ func main() {
 	}
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
-	recipepb.RegisterRecipeServiceServer(grpcServer, &recipeServer{})
+	recipe.RegisterService(grpcServer, db)
 	reflection.Register(grpcServer)
 	grpcServer.Serve(lis)
 }
