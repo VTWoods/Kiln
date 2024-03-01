@@ -4,23 +4,23 @@ import (
 	"database/sql"
 
 	recipepb "github.com/VTWoods/kiln/proto"
+	"github.com/google/uuid"
 )
 
 type RecipeBook struct {
 	db *sql.DB
 }
 
-func (b *RecipeBook) AddRecipe(newRecipe *recipepb.Recipe) (int32, error) {
+func (b *RecipeBook) AddRecipe(newRecipe *recipepb.Recipe) (string, error) {
 	insertStatement := `
-	INSERT INTO recipes (title, content_blob)
-	VALUES ($1, $2)
-	RETURNING recipe_id
+	INSERT INTO recipes (id, title, content_blob)
+	VALUES ($1, $2, $3)
 	`
-	id := 0
-	if err := b.db.QueryRow(insertStatement, newRecipe.Title, "").Scan(&id); err != nil {
-		return 0, err
+	id := uuid.New().String()
+	if _, err := b.db.Exec(insertStatement, id, newRecipe.Title, ""); err != nil {
+		return "", err
 	}
-	return int32(id), nil
+	return id, nil
 }
 
 func (b *RecipeBook) ListRecipes() ([]*recipepb.Recipe, error) {

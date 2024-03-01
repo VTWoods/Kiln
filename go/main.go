@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	databaseFile = flag.String("sqlite_db", "bin/kiln.db", "SQLite database file.")
+	databaseFile = flag.String("sqlite_db", "../bin/kiln.db", "SQLite database file.")
 	serverPort   = flag.Int("server_port", 7070, "GRPC server Port.")
 )
 
