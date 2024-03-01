@@ -1,4 +1,4 @@
-module github.com/vtwoods/kiln
+module github.com/VTWoods/kiln
 
 go 1.22.0
 

@@ -5,9 +5,7 @@ import (
 	"flag"
 	"log"
 
-	"github.com/vtwoods/kiln/proto/recipepb"
-	"github.com/vtwoods/kiln/test"
-
+	recipepb "github.com/VTWoods/kiln/proto"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -16,7 +14,7 @@ var (
 )
 
 type RecipeServer struct {
-	recipepb.UnimplementedRecipeServer
+	recipepb.UnimplementedGreeterServer
 }
 
 func main() {
@@ -25,6 +23,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	test.Foobar{}
 	defer db.Close()
 }
