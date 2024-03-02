@@ -18,7 +18,7 @@ func (s *recipeServer) AddRecipe(ctx context.Context, request *recipepb.AddRecip
 	if err != nil {
 		return nil, err
 	}
-	return &recipepb.AddRecipeResponse{RecipeId: new_id}, nil
+	return &recipepb.AddRecipeResponse{RecipeId: int32(new_id)}, nil
 }
 
 func (s *recipeServer) ListRecipes(ctx context.Context, request *recipepb.ListRecipesRequest) (*recipepb.ListRecipesResponse, error) {

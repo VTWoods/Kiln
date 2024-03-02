@@ -4,28 +4,28 @@ import (
 	"database/sql"
 
 	recipepb "github.com/VTWoods/kiln/proto"
-	"github.com/google/uuid"
 )
 
 type RecipeBook struct {
 	db *sql.DB
 }
 
-func (b *RecipeBook) AddRecipe(newRecipe *recipepb.Recipe) (string, error) {
+func (b *RecipeBook) AddRecipe(newRecipe *recipepb.Recipe) (int, error) {
 	insertStatement := `
-	INSERT INTO recipes (id, title, content_blob)
-	VALUES ($1, $2, $3)
+	INSERT INTO recipes (title, content_blob)
+	VALUES ($1, $2)
+	RETURNING id;
 	`
-	id := uuid.New().String()
-	if _, err := b.db.Exec(insertStatement, id, newRecipe.Title, ""); err != nil {
-		return "", err
+	id := 0
+	if err := b.db.QueryRow(insertStatement, newRecipe.Title, "").Scan(&id); err != nil {
+		return 0, err
 	}
 	return id, nil
 }
 
 func (b *RecipeBook) ListRecipes() ([]*recipepb.Recipe, error) {
 	listStatement := `
-	SELECT title FROM recipes
+	SELECT id, title FROM recipes
 	`
 	rows, err := b.db.Query(listStatement)
 	if err != nil {
@@ -34,8 +34,9 @@ func (b *RecipeBook) ListRecipes() ([]*recipepb.Recipe, error) {
 	var recipes []*recipepb.Recipe
 	for rows.Next() {
 		title := ""
-		rows.Scan(&title)
-		recipes = append(recipes, &recipepb.Recipe{Title: title})
+		id := 0
+		rows.Scan(&id, &title)
+		recipes = append(recipes, &recipepb.Recipe{Id: int32(id), Title: title})
 	}
 	return recipes, nil
 }

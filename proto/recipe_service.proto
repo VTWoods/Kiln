@@ -3,7 +3,8 @@ syntax = "proto3";
 option go_package = "github.com/vtwoods/kiln/proto/recipepb";
 
 message Recipe {
-string title = 1;
+  int32 id = 1;
+  string title = 2;
 }
 
 message ListRecipesRequest {
@@ -18,7 +19,7 @@ message AddRecipeRequest {
 }  
 
 message AddRecipeResponse {
-  string recipe_id = 1;
+  int32 recipe_id = 1;
 }
 
 // The greeting service definition.
