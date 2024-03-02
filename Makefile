@@ -12,3 +12,4 @@ run_server: compile_pb
 compile_pb:
 	rm go/proto/* || true
 	protoc -I=proto --go_opt=paths=source_relative --go_out=go/proto --go-grpc_out=go/proto --go-grpc_opt=paths=source_relative proto/*
+
