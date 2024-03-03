@@ -1,7 +1,11 @@
-import { StatusBar } from 'expo-status-bar';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
-import { isConstructorDeclaration } from 'typescript';
-import { ListItem } from '@rneui/themed'
+import React from 'react';
+import { FlatList, StyleSheet, Text, TouchableHighlight, View } from 'react-native';
+import {NavigationContainer, NavigationHelpersContext, StackActions} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
 
 class Recipe {
   title: string;
@@ -15,26 +19,53 @@ const testRecipes = [
   new Recipe("Hotdogs")
 ]
 
-const RecipeBook = () => {
+const RecipeListItem = ({navigation, recipe}) => {
+  return (
+    <TouchableHighlight onPress={() => {navigation.push('RecipeDetails', {recipe: recipe})}}>
+        <Text style={styles.button}>{recipe.title}</Text>
+    </TouchableHighlight>
+  );
+}
+
+const RecipeDetails = ({route, navigation}) => {
+  const { recipe } = route.params;
+  return (
+    <Text>{recipe.title}</Text>
+  );
+}
+
+const RecipeList = ({navigation}) => {
   return (
     <View style={styles.container}>
-      {
-        testRecipes.map((item, i) =>(
-          <ListItem key={i} bottomDivider>
-            <ListItem.Content>
-              <ListItem.Title>{item.title}</ListItem.Title>
-            </ListItem.Content>
-            <ListItem.Chevron/>
-          </ListItem>
-        ))
-      }
-    </View>
+    <FlatList
+      data={testRecipes}
+      renderItem={({item}) => RecipeListItem({navigation, recipe: item})}/>
+  </View>
+  );
+}
+
+const RecipeBook = () => {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen
+        name="RecipeList"
+        component={RecipeList}
+        />
+      <Stack.Screen
+        name="RecipeDetails"
+        component={RecipeDetails}
+        />
+    </Stack.Navigator>
   );
 }
 
 export default function App() {
   return (
-    <RecipeBook/>
+    <NavigationContainer>
+      <Tab.Navigator>
+        <Tab.Screen name="RecipeBook" component={RecipeBook} />
+      </Tab.Navigator>
+    </NavigationContainer>
   );
 }
 
@@ -42,6 +73,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingTop: 22,
+  },
+  button: {
+    alignItems: 'center',
+    backgroundColor: '#DDDDDD',
+    padding: 10,
   },
   item: {
     padding: 10,
