@@ -27,7 +27,7 @@ const RecipeListItem = ({navigation, recipe}) => {
   );
 }
 
-const RecipeDetails = ({route, navigation}) => {
+const RecipeDetails = ({route}) => {
   const { recipe } = route.params;
   return (
     <Text>{recipe.title}</Text>
