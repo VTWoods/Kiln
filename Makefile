@@ -9,6 +9,9 @@ apply_db:
 run_server: compile_pb
 	cd go; go run main.go
 
+run_fe:
+	cd kiln-app; npm run web
+
 compile_pb:
 	rm go/proto/* || true
 	protoc -I=proto --go_opt=paths=source_relative --go_out=go/proto --go-grpc_out=go/proto --go-grpc_opt=paths=source_relative proto/*
