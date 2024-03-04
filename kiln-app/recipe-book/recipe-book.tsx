@@ -2,26 +2,15 @@ import React from 'react';
 import { FlatList, StyleSheet, Text, TouchableHighlight, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Recipe } from '../proto/recipe_service_pb'
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-class Recipe {
-  title: string;
-  constructor(myTitle: string) {
-    this.title = myTitle;
-  }
-}
-
-const testRecipes = [
-  new Recipe("Hamburgers"),
-  new Recipe("Hotdogs")
-]
-
 const RecipeListItem = ({navigation, recipe}) => {
   return (
     <TouchableHighlight onPress={() => {navigation.push('RecipeDetails', {recipe: recipe})}}>
-        <Text style={styles.button}>{recipe.title}</Text>
+        <Text style={styles.button}>{recipe.getTitle()}</Text>
     </TouchableHighlight>
   );
 }
@@ -29,11 +18,21 @@ const RecipeListItem = ({navigation, recipe}) => {
 const RecipeDetails = ({route}) => {
   const { recipe } = route.params;
   return (
-    <Text>{recipe.title}</Text>
+    <Text>{recipe.getTitle()}</Text>
   );
 }
 
 const RecipeList = ({navigation}) => {
+  var testRecipes = new Array<Recipe>();
+  var newRecipe :Recipe = new Recipe();
+  newRecipe.setId(0);
+  newRecipe.setTitle("Hamburger");
+  testRecipes.push(newRecipe);
+  newRecipe = new Recipe();
+  newRecipe.setId(1);
+  newRecipe.setTitle("Hotdog");
+  testRecipes.push(newRecipe);
+
   return (
     <View style={styles.container}>
     <FlatList
