@@ -13,6 +13,7 @@ import (
 	"github.com/VTWoods/kiln/recipe"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/rs/cors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -55,7 +56,7 @@ func main() {
 	}
 
 	// Start HTTP server (and proxy calls to gRPC server endpoint)
-	if err = http.ListenAndServe(":8084", mux); err != nil {
+	if err = http.ListenAndServe(":8084", cors.Default().Handler(mux)); err != nil {
 		log.Fatalf("listen and serve failed: %v", err)
 	}
 }

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableHighlight, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Recipe } from '../proto/recipe_service_pb'
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -10,7 +9,7 @@ const Tab = createBottomTabNavigator();
 const RecipeListItem = ({navigation, recipe}) => {
   return (
     <TouchableHighlight onPress={() => {navigation.push('RecipeDetails', {recipe: recipe})}}>
-        <Text style={styles.button}>{recipe.getTitle()}</Text>
+        <Text style={styles.button}>{recipe.title}</Text>
     </TouchableHighlight>
   );
 }
@@ -18,30 +17,20 @@ const RecipeListItem = ({navigation, recipe}) => {
 const RecipeDetails = ({route}) => {
   const { recipe } = route.params;
   return (
-    <Text>{recipe.getTitle()}</Text>
+    <Text>{recipe.title}</Text>
   );
 }
 
 const RecipeList = ({navigation}) => {
   const [recipes, setRecipes] = useState({recipes: []});
   useEffect(() => {
-    fetch("http://woodsfamily.net:8084/RecipeService/ListRecipes",
+    fetch("http://localhost:8084/RecipeService/ListRecipes",
     {
       method: "POST",
     })
     .then(response => response.json())
     .then(data => setRecipes(data));
   })
-
-  // var testRecipes = new Array<Recipe>();
-  // var newRecipe :Recipe = new Recipe();
-  // newRecipe.setId(0);
-  // newRecipe.setTitle("Hamburger");
-  // testRecipes.push(newRecipe);
-  // newRecipe = new Recipe();
-  // newRecipe.setId(1);
-  // newRecipe.setTitle("Hotdog");
-  // testRecipes.push(newRecipe);
 
   return (
     <View style={styles.container}>

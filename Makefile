@@ -12,11 +12,6 @@ run_server: compile_pb
 compile_pb:
 	rm go/proto/* || true
 	protoc -I=proto --go_opt=paths=source_relative --go_out=go/proto --go-grpc_out=go/proto --go-grpc_opt=paths=source_relative proto/*
-	protoc \
-    	--plugin="protoc-gen-ts=./kiln-app/node_modules/.bin/protoc-gen-ts" \
-    	--js_out="import_style=commonjs,binary:./kiln-app" \
-    	--ts_out="./kiln-app" \
-    	proto/*
 	protoc -I=proto --grpc-gateway_out=go/proto \
     	--grpc-gateway_opt paths=source_relative \
     	--grpc-gateway_opt generate_unbound_methods=true \
