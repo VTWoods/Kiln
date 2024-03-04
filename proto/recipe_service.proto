@@ -25,7 +25,8 @@ message AddRecipeResponse {
 // The greeting service definition.
 service RecipeService {
   // List all recipes
-  rpc ListRecipes (ListRecipesRequest) returns (ListRecipesResponse) {}
+  rpc ListRecipes (ListRecipesRequest) returns (ListRecipesResponse) {
+  }
 
   // Add a Recipe
   rpc AddRecipe (AddRecipeRequest) returns (AddRecipeResponse) {}

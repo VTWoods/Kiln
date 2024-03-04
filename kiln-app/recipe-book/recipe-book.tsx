@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableHighlight, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -23,20 +23,30 @@ const RecipeDetails = ({route}) => {
 }
 
 const RecipeList = ({navigation}) => {
-  var testRecipes = new Array<Recipe>();
-  var newRecipe :Recipe = new Recipe();
-  newRecipe.setId(0);
-  newRecipe.setTitle("Hamburger");
-  testRecipes.push(newRecipe);
-  newRecipe = new Recipe();
-  newRecipe.setId(1);
-  newRecipe.setTitle("Hotdog");
-  testRecipes.push(newRecipe);
+  const [recipes, setRecipes] = useState({recipes: []});
+  useEffect(() => {
+    fetch("http://woodsfamily.net:8084/RecipeService/ListRecipes",
+    {
+      method: "POST",
+    })
+    .then(response => response.json())
+    .then(data => setRecipes(data));
+  })
+
+  // var testRecipes = new Array<Recipe>();
+  // var newRecipe :Recipe = new Recipe();
+  // newRecipe.setId(0);
+  // newRecipe.setTitle("Hamburger");
+  // testRecipes.push(newRecipe);
+  // newRecipe = new Recipe();
+  // newRecipe.setId(1);
+  // newRecipe.setTitle("Hotdog");
+  // testRecipes.push(newRecipe);
 
   return (
     <View style={styles.container}>
     <FlatList
-      data={testRecipes}
+      data={recipes.recipes}
       renderItem={({item}) => RecipeListItem({navigation, recipe: item})}/>
   </View>
   );
