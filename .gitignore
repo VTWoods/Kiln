@@ -12,6 +12,10 @@
 web/node_modules/
 web/dist/
 
+# Python virtual environment for recipe-scrapers
+.venv/
+__pycache__/
+
 # Environment & editor files
 .env
 .env.local

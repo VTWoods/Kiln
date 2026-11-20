@@ -3,6 +3,8 @@
 install:
 	go mod tidy
 	npm --prefix web install
+	python3 -m venv .venv
+	.venv/bin/pip install -r scripts/requirements.txt
 
 build-web:
 	npm --prefix web run build

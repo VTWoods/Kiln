@@ -9,13 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VTWoods/Kiln/internal/importer"
 	"github.com/gin-gonic/gin"
 )
 
 // Config holds dependencies for the HTTP server.
 type Config struct {
-	DB        *sql.DB
-	StaticDir string
+	DB         *sql.DB
+	StaticDir  string
+	Importer   importer.Importer
+	ImageStore *importer.ImageStore
 }
 
 // NewRouter builds the Gin engine with API routes and static React SPA serving.
@@ -47,6 +50,8 @@ func NewRouter(cfg Config) *gin.Engine {
 				"database": dbStatus,
 			})
 		})
+
+		registerRecipeRoutes(api, cfg)
 	}
 
 	// Serve built React static files and fall back to index.html for client-side routes.

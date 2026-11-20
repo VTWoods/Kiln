@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS recipes (
 	servings INTEGER NOT NULL DEFAULT 1,
 	prep_minutes INTEGER NOT NULL DEFAULT 0,
 	cook_minutes INTEGER NOT NULL DEFAULT 0,
+	source_url TEXT NOT NULL DEFAULT '',
+	image_url TEXT NOT NULL DEFAULT '',
 	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -96,5 +98,65 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("initialize database schema: %w", err)
 	}
 
+	if err := migrate(conn); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("migrate database schema: %w", err)
+	}
+
 	return conn, nil
+}
+
+func migrate(conn *sql.DB) error {
+	cols, err := tableColumns(conn, "recipes")
+	if err != nil {
+		return err
+	}
+
+	additions := []struct {
+		name string
+		ddl  string
+	}{
+		{name: "source_url", ddl: "ALTER TABLE recipes ADD COLUMN source_url TEXT NOT NULL DEFAULT '';"},
+		{name: "image_url", ddl: "ALTER TABLE recipes ADD COLUMN image_url TEXT NOT NULL DEFAULT '';"},
+	}
+
+	for _, col := range additions {
+		if cols[col.name] {
+			continue
+		}
+		if _, err := conn.Exec(col.ddl); err != nil {
+			return fmt.Errorf("add column recipes.%s: %w", col.name, err)
+		}
+	}
+
+	return nil
+}
+
+func tableColumns(conn *sql.DB, table string) (map[string]bool, error) {
+	rows, err := conn.Query(fmt.Sprintf("PRAGMA table_info(%s);", table))
+	if err != nil {
+		return nil, fmt.Errorf("inspect columns for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &pk); err != nil {
+			return nil, fmt.Errorf("scan table_info for %s: %w", table, err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate table_info for %s: %w", table, err)
+	}
+
+	return cols, nil
 }

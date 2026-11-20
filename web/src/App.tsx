@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import RecipesPage from "./pages/RecipesPage";
+import RecipeDetailPage from "./pages/RecipeDetailPage";
 import ShoppingListsPage from "./pages/ShoppingListsPage";
 
 type HealthResponse = {
@@ -77,6 +78,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/recipes" replace />} />
           <Route path="/recipes" element={<RecipesPage />} />
+          <Route path="/recipes/:id" element={<RecipeDetailPage />} />
           <Route path="/shopping-lists" element={<ShoppingListsPage />} />
           <Route path="*" element={<Navigate to="/recipes" replace />} />
         </Routes>
