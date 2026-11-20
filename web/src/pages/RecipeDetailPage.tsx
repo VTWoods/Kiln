@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { deleteRecipe, getRecipe } from "../api/recipes";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
+import CastRecipeModal from "../components/CastRecipeModal";
 import {
   formatHostname,
   formatMinutes,
@@ -18,6 +19,7 @@ export default function RecipeDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showAddToListModal, setShowAddToListModal] = useState(false);
+  const [showCastModal, setShowCastModal] = useState(false);
   const [addedNotice, setAddedNotice] = useState<{
     listId: number;
     listName: string;
@@ -121,6 +123,19 @@ export default function RecipeDetailPage() {
           >
             + Add to Shopping List
           </button>
+          <button
+            type="button"
+            onClick={() => setShowCastModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+          >
+            Cast to Nest Hub
+          </button>
+          <Link
+            to={`/recipes/${recipe.id}/cook`}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+          >
+            Cook Mode
+          </Link>
           {hasSourceUrl && (
             <a
               href={recipe.source_url}
@@ -310,6 +325,14 @@ export default function RecipeDetailPage() {
             setShowAddToListModal(false);
             setAddedNotice(info);
           }}
+        />
+      )}
+
+      {showCastModal && (
+        <CastRecipeModal
+          recipeId={recipe.id}
+          recipeTitle={recipe.title}
+          onClose={() => setShowCastModal(false)}
         />
       )}
     </article>

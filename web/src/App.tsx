@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useMatch } from "react-router-dom";
+import CookModePage from "./pages/CookModePage";
 import RecipesPage from "./pages/RecipesPage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import ShoppingListsPage from "./pages/ShoppingListsPage";
@@ -16,9 +17,11 @@ type HealthState =
   | { kind: "error"; message: string };
 
 export default function App() {
+  const isCookMode = Boolean(useMatch("/recipes/:id/cook"));
   const [health, setHealth] = useState<HealthState>({ kind: "loading" });
 
   useEffect(() => {
+    if (isCookMode) return;
     let active = true;
     fetch("/api/health")
       .then(async (res) => {
@@ -42,7 +45,15 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isCookMode]);
+
+  if (isCookMode) {
+    return (
+      <Routes>
+        <Route path="/recipes/:id/cook" element={<CookModePage />} />
+      </Routes>
+    );
+  }
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     [

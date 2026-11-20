@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VTWoods/Kiln/internal/caster"
 	"github.com/VTWoods/Kiln/internal/importer"
 	"github.com/gin-gonic/gin"
 )
@@ -19,6 +20,7 @@ type Config struct {
 	StaticDir  string
 	Importer   importer.Importer
 	ImageStore *importer.ImageStore
+	Caster     caster.Caster
 }
 
 // NewRouter builds the Gin engine with API routes and static React SPA serving.
@@ -53,6 +55,7 @@ func NewRouter(cfg Config) *gin.Engine {
 
 		registerRecipeRoutes(api, cfg)
 		registerShoppingListRoutes(api, cfg)
+		registerCastRoutes(api, cfg)
 	}
 
 	// Serve built React static files and fall back to index.html for client-side routes.

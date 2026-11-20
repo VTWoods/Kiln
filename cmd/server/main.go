@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VTWoods/Kiln/internal/caster"
 	"github.com/VTWoods/Kiln/internal/db"
 	"github.com/VTWoods/Kiln/internal/importer"
 	"github.com/VTWoods/Kiln/internal/server"
@@ -24,6 +25,7 @@ func main() {
 	imagesDir := envOrDefault("IMAGES_DIR", filepath.Join(filepath.Dir(dbPath), "images"))
 	scraperPython := envOrDefault("SCRAPER_PYTHON", defaultPythonBin())
 	scraperScript := envOrDefault("SCRAPER_SCRIPT", "./scripts/scrape_recipe.py")
+	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
 
 	conn, err := db.Open(dbPath)
 	if err != nil {
@@ -38,12 +40,14 @@ func main() {
 	fetcher := importer.NewSafeFetcher()
 	recipeImporter := importer.NewRecipeScrapersImporter(fetcher, scraperPython, scraperScript)
 	imageStore := importer.NewImageStore(imagesDir, fetcher)
+	nestCaster := caster.NewGoChromecastCaster(publicBaseURL)
 
 	router := server.NewRouter(server.Config{
 		DB:         conn,
 		StaticDir:  staticDir,
 		Importer:   recipeImporter,
 		ImageStore: imageStore,
+		Caster:     nestCaster,
 	})
 
 	addr := host + ":" + port
