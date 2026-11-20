@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+__pycache__
+bin
+data
+*.db
+*.db-shm
+*.db-wal
+web/node_modules
+web/dist
+README.md
+Makefile
+Dockerfile
+.dockerignore

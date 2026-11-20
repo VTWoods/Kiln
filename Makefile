@@ -1,4 +1,9 @@
-.PHONY: install build-web build-api build run dev-api dev-web test clean
+.PHONY: install build-web build-api build run dev-api dev-web test clean docker-build docker-run docker-stop
+
+DOCKER_IMAGE ?= kiln:latest
+DOCKER_CONTAINER ?= kiln
+DOCKER_PORT ?= 8090
+DOCKER_VOLUME ?= kiln-data:/data
 
 install:
 	go mod tidy
@@ -29,3 +34,18 @@ test:
 
 clean:
 	rm -rf bin web/dist
+
+docker-build:
+	docker build -t $(DOCKER_IMAGE) .
+
+docker-run: docker-build
+	-docker rm -f $(DOCKER_CONTAINER) 2>/dev/null || true
+	docker run -d \
+		--name $(DOCKER_CONTAINER) \
+		-p $(DOCKER_PORT):8080 \
+		-v $(DOCKER_VOLUME) \
+		--restart unless-stopped \
+		$(DOCKER_IMAGE)
+
+docker-stop:
+	docker rm -f $(DOCKER_CONTAINER)

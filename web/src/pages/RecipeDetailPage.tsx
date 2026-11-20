@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { deleteRecipe, getRecipe } from "../api/recipes";
+import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import {
   formatHostname,
   formatMinutes,
@@ -16,6 +17,12 @@ export default function RecipeDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showAddToListModal, setShowAddToListModal] = useState(false);
+  const [addedNotice, setAddedNotice] = useState<{
+    listId: number;
+    listName: string;
+    addedCount: number;
+  } | null>(null);
 
   useEffect(() => {
     const numericId = Number(id);
@@ -106,13 +113,20 @@ export default function RecipeDetailPage() {
           ← Back to Recipes
         </Link>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAddToListModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
+          >
+            + Add to Shopping List
+          </button>
           {hasSourceUrl && (
             <a
               href={recipe.source_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
             >
               Original Recipe ↗
             </a>
@@ -127,6 +141,32 @@ export default function RecipeDetailPage() {
           </button>
         </div>
       </div>
+
+      {addedNotice && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span>
+            Added <strong>{addedNotice.addedCount}</strong> ingredient
+            {addedNotice.addedCount === 1 ? "" : "s"} to{" "}
+            <strong>{addedNotice.listName}</strong>.
+          </span>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/shopping-lists?list=${addedNotice.listId}`}
+              className="font-medium text-emerald-900 underline hover:text-emerald-700"
+            >
+              View Shopping List →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setAddedNotice(null)}
+              className="text-emerald-600 hover:text-emerald-900"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Hero card */}
       <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xs">
@@ -194,9 +234,20 @@ export default function RecipeDetailPage() {
       {/* Ingredients & Instructions */}
       <div className="grid gap-6 md:grid-cols-5">
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs md:col-span-2">
-          <h2 className="text-base font-semibold text-stone-900">
-            Ingredients
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-stone-900">
+              Ingredients
+            </h2>
+            {recipe.ingredients && recipe.ingredients.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAddToListModal(true)}
+                className="text-xs font-medium text-amber-700 hover:text-amber-800 hover:underline"
+              >
+                + Add to list
+              </button>
+            )}
+          </div>
           {recipe.ingredients && recipe.ingredients.length > 0 ? (
             <ul className="mt-4 divide-y divide-stone-100 text-sm">
               {recipe.ingredients.map((ing) => (
@@ -249,6 +300,18 @@ export default function RecipeDetailPage() {
           )}
         </section>
       </div>
+      {showAddToListModal && (
+        <AddToShoppingListModal
+          recipeId={recipe.id}
+          recipeTitle={recipe.title}
+          initialIngredients={recipe.ingredients}
+          onClose={() => setShowAddToListModal(false)}
+          onAdded={(info) => {
+            setShowAddToListModal(false);
+            setAddedNotice(info);
+          }}
+        />
+      )}
     </article>
   );
 }

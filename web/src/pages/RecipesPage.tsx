@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listRecipes } from "../api/recipes";
+import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import ImportRecipeModal from "../components/ImportRecipeModal";
 import {
   formatHostname,
@@ -14,6 +15,13 @@ export default function RecipesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [recipeForList, setRecipeForList] = useState<Recipe | null>(null);
+  const [addedNotice, setAddedNotice] = useState<{
+    listId: number;
+    listName: string;
+    addedCount: number;
+    recipeTitle: string;
+  } | null>(null);
 
   const loadRecipes = () => {
     setLoading(true);
@@ -61,6 +69,33 @@ export default function RecipesPage() {
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {addedNotice && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span>
+            Added <strong>{addedNotice.addedCount}</strong> ingredient
+            {addedNotice.addedCount === 1 ? "" : "s"} from{" "}
+            <strong>{addedNotice.recipeTitle}</strong> to{" "}
+            <strong>{addedNotice.listName}</strong>.
+          </span>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/shopping-lists?list=${addedNotice.listId}`}
+              className="font-medium text-emerald-900 underline hover:text-emerald-700"
+            >
+              View Shopping List →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setAddedNotice(null)}
+              className="text-emerald-600 hover:text-emerald-900"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -156,6 +191,16 @@ export default function RecipesPage() {
                       </a>
                     )}
                   </div>
+
+                  <div className="mt-3 border-t border-stone-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setRecipeForList(recipe)}
+                      className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
+                    >
+                      + Add to Shopping List
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -167,6 +212,21 @@ export default function RecipesPage() {
         <ImportRecipeModal
           onClose={() => setShowImportModal(false)}
           onSaved={handleImported}
+        />
+      )}
+
+      {recipeForList && (
+        <AddToShoppingListModal
+          recipeId={recipeForList.id}
+          recipeTitle={recipeForList.title}
+          onClose={() => setRecipeForList(null)}
+          onAdded={(info) => {
+            setAddedNotice({
+              ...info,
+              recipeTitle: recipeForList.title,
+            });
+            setRecipeForList(null);
+          }}
         />
       )}
     </section>

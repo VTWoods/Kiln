@@ -52,6 +52,7 @@ func NewRouter(cfg Config) *gin.Engine {
 		})
 
 		registerRecipeRoutes(api, cfg)
+		registerShoppingListRoutes(api, cfg)
 	}
 
 	// Serve built React static files and fall back to index.html for client-side routes.

@@ -45,13 +45,33 @@ make dev-api
 make dev-web
 ```
 
+## Docker
+
+Build the Docker image (`kiln:latest`) and run the container (exposes port `8090` by default and persists SQLite data and cached images in the `kiln-data` volume):
+
+```bash
+# Build the image only
+make docker-build
+
+# Build and start the container (override port/image/volume as needed)
+make docker-run
+# e.g. DOCKER_PORT=8080 make docker-run
+
+# Stop and remove the container
+make docker-stop
+```
+
 ## Configuration
 
-| Environment Variable | Default           | Description                        |
-| -------------------- | ----------------- | ---------------------------------- |
-| `PORT`               | `8080`            | HTTP listen port                   |
-| `DB_PATH`            | `./data/kiln.db`  | SQLite database file path          |
-| `STATIC_DIR`         | `./web/dist`      | Built React static files directory |
+| Environment Variable | Default                    | Description                        |
+| -------------------- | -------------------------- | ---------------------------------- |
+| `HOST`               | `0.0.0.0`                  | HTTP bind address                  |
+| `PORT`               | `8080`                     | HTTP listen port                   |
+| `DB_PATH`            | `./data/kiln.db`           | SQLite database file path          |
+| `IMAGES_DIR`         | `./data/images`            | Cached recipe images directory     |
+| `STATIC_DIR`         | `./web/dist`               | Built React static files directory |
+| `SCRAPER_PYTHON`     | `./.venv/bin/python3`      | Python interpreter for scraping    |
+| `SCRAPER_SCRIPT`     | `./scripts/scrape_recipe.py` | Recipe scraper helper script     |
 
 ## Testing
 
