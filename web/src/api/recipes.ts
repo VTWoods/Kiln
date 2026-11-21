@@ -4,6 +4,15 @@ import type {
   SaveRecipePayload,
 } from "../types/recipe";
 
+export class ApiError extends Error {
+  blocked: boolean;
+  constructor(message: string, blocked = false) {
+    super(message);
+    this.name = "ApiError";
+    this.blocked = blocked;
+  }
+}
+
 async function parseJsonOrThrow<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -23,7 +32,13 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
       typeof (data as { error: unknown }).error === "string"
         ? (data as { error: string }).error
         : `Request failed (HTTP ${res.status})`;
-    throw new Error(errMsg);
+    const blocked = Boolean(
+      data &&
+        typeof data === "object" &&
+        "blocked" in data &&
+        (data as { blocked: unknown }).blocked === true,
+    );
+    throw new ApiError(errMsg, blocked);
   }
 
   return data as T;
@@ -41,12 +56,22 @@ export async function getRecipe(id: number): Promise<Recipe> {
 
 export async function importRecipePreview(
   url: string,
+  html?: string,
 ): Promise<ImportedRecipe> {
+  const body: { url: string; html?: string } = { url };
+  if (html && html.trim()) {
+    body.html = html;
+  }
   const res = await fetch("/api/recipes/import-preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(body),
   });
+  return parseJsonOrThrow<ImportedRecipe>(res);
+}
+
+export async function getImportDraft(token: string): Promise<ImportedRecipe> {
+  const res = await fetch(`/api/recipes/import-draft/${encodeURIComponent(token)}`);
   return parseJsonOrThrow<ImportedRecipe>(res);
 }
 

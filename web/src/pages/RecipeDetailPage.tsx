@@ -272,7 +272,14 @@ export default function RecipeDetailPage() {
                       {[ing.quantity, ing.unit].filter(Boolean).join(" ")}
                     </span>
                   )}
-                  <span className="text-stone-800">{ing.name}</span>
+                  <span className="text-stone-800">
+                    {ing.name}
+                    {ing.preparation && (
+                      <span className="text-stone-500">
+                        , {ing.preparation}
+                      </span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>

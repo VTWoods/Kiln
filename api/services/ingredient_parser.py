@@ -1,68 +1,33 @@
+"""Ingredient parsing and normalization backed by ingredient-parser-nlp."""
+
 from __future__ import annotations
 
 import html
+import logging
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from fractions import Fraction
+from typing import Any
 
-UNICODE_FRACTIONS: dict[str, str] = {
-    "¼": "1/4",
-    "½": "1/2",
-    "¾": "3/4",
-    "⅓": "1/3",
-    "⅔": "2/3",
-    "⅕": "1/5",
-    "⅖": "2/5",
-    "⅗": "3/5",
-    "⅘": "4/5",
-    "⅙": "1/6",
-    "⅚": "5/6",
-    "⅛": "1/8",
-    "⅜": "3/8",
-    "⅝": "5/8",
-    "⅞": "7/8",
-}
-
-QUANTITY_PREFIX_RE = re.compile(
-    r"^(\d+(?:\s+\d+/\d+|\.\d+|/\d+)?(?:\s*(?:[-–—]|to)\s*\d+(?:\s+\d+/\d+|\.\d+|/\d+)?)?)\s+(.*)$"
+from ingredient_parser import parse_ingredient as nlp_parse_ingredient
+from ingredient_parser.dataclasses import (
+    CompositeIngredientAmount,
+    IngredientAmount,
+    UnitSystem,
 )
+
+from .units import (
+    format_quantity_range,
+    normalize_unit_name,
+    to_us_customary,
+)
+
+logger = logging.getLogger(__name__)
+
 WHITESPACE_RE = re.compile(r"\s+")
 
-KNOWN_UNITS: set[str] = {
-    "cup", "cups", "c",
-    "tbsp", "tbs", "tablespoon", "tablespoons",
-    "tsp", "teaspoon", "teaspoons",
-    "oz", "ounce", "ounces",
-    "fl",
-    "lb", "lbs", "pound", "pounds",
-    "g", "gram", "grams",
-    "kg", "kilogram", "kilograms",
-    "ml", "milliliter", "milliliters", "millilitre", "millilitres",
-    "l", "liter", "liters", "litre", "litres",
-    "pt", "pint", "pints",
-    "qt", "quart", "quarts",
-    "gal", "gallon", "gallons",
-    "clove", "cloves",
-    "can", "cans",
-    "pinch", "pinches",
-    "dash", "dashes",
-    "slice", "slices",
-    "piece", "pieces",
-    "bunch", "bunches",
-    "sprig", "sprigs",
-    "stalk", "stalks",
-    "head", "heads",
-    "stick", "sticks",
-    "package", "packages", "pkg", "pkgs",
-    "packet", "packets",
-    "bag", "bags",
-    "jar", "jars",
-    "box", "boxes",
-    "bottle", "bottles",
-    "drop", "drops",
-    "handful", "handfuls",
-    "inch", "inches",
-    "leaf", "leaves",
-}
+CONTAINER_UNITS = {"can", "jar", "bottle", "package", "packet", "bag", "box", "container"}
 
 
 @dataclass(frozen=True)
@@ -71,6 +36,7 @@ class ImportedIngredient:
     quantity: str
     unit: str
     name: str
+    preparation: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -78,6 +44,7 @@ class ImportedIngredient:
             "quantity": self.quantity,
             "unit": self.unit,
             "name": self.name,
+            "preparation": self.preparation,
         }
 
 
@@ -89,69 +56,148 @@ def clean_text(text: str) -> str:
     return clean_whitespace(html.unescape(text or ""))
 
 
-def _replace_unicode_fractions(text: str) -> str:
-    out: list[str] = []
-    prev_digit = False
-    for ch in text:
-        frac = UNICODE_FRACTIONS.get(ch)
-        if frac is not None:
-            if prev_digit:
-                out.append(" ")
-            out.append(frac)
-            prev_digit = False
-            continue
-        out.append(ch)
-        prev_digit = "0" <= ch <= "9"
-    return clean_whitespace("".join(out))
+class IngredientParser(ABC):
+    """Swappable interface for parsing & normalizing raw recipe ingredient strings."""
+
+    @abstractmethod
+    def parse(self, raw: str) -> ImportedIngredient:
+        raise NotImplementedError
 
 
-def _strip_leading_of(text: str) -> str:
-    trimmed = text.strip()
-    if len(trimmed) > 3 and trimmed[:3].lower() == "of ":
-        return trimmed[3:].strip()
-    return trimmed
+def _to_float(val: Any) -> float | None:
+    if val is None or val == "":
+        return None
+    if isinstance(val, (int, float, Fraction)):
+        return float(val)
+    try:
+        return float(Fraction(str(val)))
+    except (ValueError, ZeroDivisionError):
+        try:
+            return float(str(val))
+        except ValueError:
+            return None
 
 
-def _split_unit_and_name(rest: str) -> tuple[str, str]:
-    fields = rest.split()
-    if len(fields) < 2:
-        return "", rest
+def _extract_amount(
+    amounts: list[IngredientAmount | CompositeIngredientAmount],
+) -> tuple[str, str]:
+    if not amounts:
+        return "", ""
 
-    first_raw = fields[0]
-    first_norm = first_raw.rstrip(".,").lower()
+    # Unwrap CompositeIngredientAmount if returned
+    flat: list[IngredientAmount] = []
+    for item in amounts:
+        if isinstance(item, CompositeIngredientAmount):
+            flat.extend(item.amounts)
+        elif isinstance(item, IngredientAmount):
+            flat.append(item)
 
-    if first_norm in ("fl", "fluid") and len(fields) >= 3:
-        second_norm = fields[1].rstrip(".,").lower()
-        if second_norm in ("oz", "ounce", "ounces"):
-            unit = f"{first_raw} {fields[1].rstrip(',')}"
-            name = _strip_leading_of(" ".join(fields[2:]))
-            return unit, name
+    if not flat:
+        return "", ""
 
-    if first_norm in KNOWN_UNITS:
-        unit = first_raw.rstrip(",")
-        name = _strip_leading_of(" ".join(fields[1:]))
-        return unit, name
+    # Case 1: Container + per-unit size (e.g., "2 (14.5-ounce) cans" -> 29 ounce)
+    if len(flat) >= 2:
+        first, second = flat[0], flat[1]
+        first_unit = normalize_unit_name(first.unit)
+        second_unit = normalize_unit_name(second.unit)
+        if first_unit in CONTAINER_UNITS and getattr(second, "SINGULAR", False) and second_unit:
+            c_low = _to_float(first.quantity)
+            c_high = _to_float(first.quantity_max) or c_low
+            s_low = _to_float(second.quantity)
+            s_high = _to_float(second.quantity_max) or s_low
+            if c_low is not None and s_low is not None:
+                tot_low = c_low * s_low
+                tot_high = (c_high or c_low) * (s_high or s_low)
+                us_low, us_high, us_unit = to_us_customary(tot_low, tot_high, second_unit)
+                return format_quantity_range(us_low, us_high), us_unit
 
-    return "", rest
+    # Case 2: Dual metric + US amount listed (e.g. "200 g (7 oz)") -> prefer the US customary one
+    chosen = flat[0]
+    if len(flat) > 1:
+        for candidate in flat:
+            if candidate.unit_system == UnitSystem.US_CUSTOMARY and not getattr(
+                candidate, "SINGULAR", False
+            ):
+                chosen = candidate
+                break
+
+    low = _to_float(chosen.quantity)
+    high = _to_float(chosen.quantity_max)
+    if high is None:
+        high = low
+
+    norm_unit = normalize_unit_name(chosen.unit)
+    if low is None:
+        return "", norm_unit
+
+    us_low, us_high, us_unit = to_us_customary(low, high if high is not None else low, norm_unit)
+    return format_quantity_range(us_low, us_high), us_unit
+
+
+class NLPIngredientParser(IngredientParser):
+    """IngredientParser powered by ingredient-parser-nlp with US singular unit normalization."""
+
+    def parse(self, raw: str) -> ImportedIngredient:
+        cleaned = clean_text(raw)
+        if not cleaned:
+            return ImportedIngredient(
+                raw="", quantity="", unit="", name="", preparation=""
+            )
+
+        try:
+            parsed = nlp_parse_ingredient(
+                cleaned,
+                separate_names=True,
+                discard_isolated_stop_words=True,
+                expect_name_in_output=True,
+                volumetric_units_system="us_customary",
+            )
+        except Exception as exc:
+            logger.warning("NLP ingredient parsing failed for %r: %s", cleaned, exc)
+            return ImportedIngredient(
+                raw=cleaned, quantity="", unit="", name=cleaned, preparation=""
+            )
+
+        quantity, unit = _extract_amount(list(parsed.amount or []))
+
+        # Combine extracted ingredient name tokens cleanly
+        name_parts = [
+            clean_whitespace(n.text)
+            for n in (parsed.name or [])
+            if n and clean_whitespace(n.text)
+        ]
+        if len(name_parts) == 1:
+            name = name_parts[0]
+        elif len(name_parts) > 1:
+            name = " and ".join(name_parts)
+        else:
+            name = cleaned
+
+        # Normalize casing gently (preserve acronyms like BBQ if all-caps, else lowercase)
+        if name and not name.isupper():
+            name = name.lower()
+
+        # Combine size, preparation, comment, and purpose into the preparation column
+        prep_parts: list[str] = []
+        for field in (parsed.size, parsed.preparation, parsed.comment, parsed.purpose):
+            if field is not None:
+                txt = clean_whitespace(field.text).strip(",; ")
+                if txt and txt.lower() not in [p.lower() for p in prep_parts]:
+                    prep_parts.append(txt)
+        preparation = ", ".join(prep_parts)
+
+        return ImportedIngredient(
+            raw=cleaned,
+            quantity=quantity,
+            unit=unit,
+            name=name,
+            preparation=preparation,
+        )
+
+
+_DEFAULT_PARSER: IngredientParser = NLPIngredientParser()
 
 
 def parse_ingredient(raw: str) -> ImportedIngredient:
-    cleaned = clean_text(raw)
-    if not cleaned:
-        return ImportedIngredient(raw="", quantity="", unit="", name="")
-
-    normalized = _replace_unicode_fractions(cleaned)
-    match = QUANTITY_PREFIX_RE.match(normalized)
-    if not match:
-        return ImportedIngredient(raw=cleaned, quantity="", unit="", name=cleaned)
-
-    qty = match.group(1).strip()
-    rest = match.group(2).strip()
-    if not rest:
-        return ImportedIngredient(raw=cleaned, quantity="", unit="", name=cleaned)
-
-    unit, name = _split_unit_and_name(rest)
-    if not name:
-        return ImportedIngredient(raw=cleaned, quantity=qty, unit="", name=rest)
-
-    return ImportedIngredient(raw=cleaned, quantity=qty, unit=unit, name=name)
+    """Parse and normalize a raw ingredient line into US singular units + preparation."""
+    return _DEFAULT_PARSER.parse(raw)

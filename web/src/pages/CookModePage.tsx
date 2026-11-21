@@ -205,6 +205,15 @@ export default function CookModePage() {
                               </strong>
                             )}
                             {ing.name}
+                            {ing.preparation && (
+                              <span
+                                className={
+                                  done ? "text-stone-400" : "text-stone-500"
+                                }
+                              >
+                                , {ing.preparation}
+                              </span>
+                            )}
                           </span>
                         </button>
                       </li>

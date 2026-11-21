@@ -18,6 +18,9 @@ ALLOWED_HOSTS = ["*"]
 
 APPEND_SLASH = False
 
+# Allow large HTML pages submitted via Paste HTML or the browser bookmarklet.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MiB
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",

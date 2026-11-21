@@ -131,6 +131,7 @@ def cast_recipe_html_view(request: HttpRequest, recipe_id: str) -> HttpResponse:
         {
             "amount": " ".join(p for p in (ing.quantity.strip(), ing.unit.strip()) if p),
             "name": ing.name,
+            "preparation": ing.preparation.strip(),
         }
         for ing in recipe.ingredients.all().order_by("sort_order", "id")
     ]

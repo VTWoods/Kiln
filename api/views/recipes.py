@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 from typing import Any
+from urllib.parse import urlencode
 
 from django.db import transaction
 from django.db.models import Count
@@ -17,6 +18,7 @@ from api.services.fetcher import (
     validate_http_url,
 )
 from api.services.images import ImageStore, is_local_image_url
+from api.services.import_drafts import draft_store
 from api.views import (
     get_image_store,
     get_importer,
@@ -35,6 +37,7 @@ def _serialize_ingredient(ing: RecipeIngredient) -> dict[str, Any]:
         "name": ing.name,
         "quantity": ing.quantity,
         "unit": ing.unit,
+        "preparation": ing.preparation,
         "sort_order": ing.sort_order,
     }
 
@@ -86,7 +89,19 @@ def _importer_error_response(exc: Exception) -> JsonResponse:
             status=422,
         )
     if isinstance(exc, FetchFailedError):
-        return JsonResponse({"error": str(exc)}, status=502)
+        msg = str(exc)
+        if "HTTP 403" in msg:
+            return JsonResponse(
+                {
+                    "error": (
+                        "This site blocked automated fetching (HTTP 403). "
+                        "Use the Paste HTML tab or the Save to Kiln bookmarklet instead."
+                    ),
+                    "blocked": True,
+                },
+                status=502,
+            )
+        return JsonResponse({"error": msg}, status=502)
     return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -123,6 +138,7 @@ def _validate_recipe_payload(data: dict[str, Any]) -> tuple[dict[str, Any] | Non
                     "name": name,
                     "quantity": str(item.get("quantity") or "").strip(),
                     "unit": str(item.get("unit") or "").strip(),
+                    "preparation": str(item.get("preparation") or "").strip(),
                 }
             )
 
@@ -163,11 +179,67 @@ def import_preview_view(request: HttpRequest) -> JsonResponse:
         return err_resp or JsonResponse({"error": "invalid request body"}, status=400)
 
     raw_url = str(data.get("url") or "")
+    raw_html = str(data.get("html") or "")
     try:
-        preview = get_importer().import_url(raw_url)
+        importer = get_importer()
+        if raw_html.strip():
+            preview = importer.import_html(raw_url, raw_html.encode("utf-8"))
+        else:
+            preview = importer.import_url(raw_url)
     except Exception as exc:
         return _importer_error_response(exc)
 
+    return JsonResponse(preview.to_dict(), status=200)
+
+
+@csrf_exempt
+def bookmarklet_import_view(request: HttpRequest) -> HttpResponse:
+    """Receive URL + HTML via a browser bookmarklet POST, store a draft preview, and redirect into Kiln."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    raw_url = ""
+    raw_html = ""
+    content_type = (request.content_type or "").lower()
+    if "application/json" in content_type:
+        data, err_resp = parse_json_body(request)
+        if err_resp is not None or data is None:
+            return err_resp or JsonResponse({"error": "invalid request body"}, status=400)
+        raw_url = str(data.get("url") or "")
+        raw_html = str(data.get("html") or "")
+    else:
+        raw_url = str(request.POST.get("url") or "")
+        raw_html = str(request.POST.get("html") or "")
+
+    try:
+        preview = get_importer().import_html(raw_url, raw_html.encode("utf-8"))
+    except Exception as exc:
+        logger.warning("bookmarklet import error: %s", exc)
+        err_msg = (
+            "Could not extract recipe data from that page."
+            if isinstance(exc, ParseFailedError)
+            else str(exc)
+        )
+        qs = urlencode({"import_error": err_msg})
+        resp = HttpResponse(status=303)
+        resp["Location"] = f"/recipes?{qs}"
+        return resp
+
+    token = draft_store.save(preview)
+    resp = HttpResponse(status=303)
+    resp["Location"] = f"/recipes?import_draft={token}"
+    return resp
+
+
+def import_draft_view(request: HttpRequest, token: str) -> JsonResponse:
+    if request.method != "GET":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    preview = draft_store.get(token.strip())
+    if preview is None:
+        return JsonResponse(
+            {"error": "import draft expired or not found"}, status=404
+        )
     return JsonResponse(preview.to_dict(), status=200)
 
 
@@ -220,6 +292,7 @@ def recipes_collection_view(request: HttpRequest) -> JsonResponse:
                                 name=ing["name"],
                                 quantity=ing["quantity"],
                                 unit=ing["unit"],
+                                preparation=ing["preparation"],
                                 sort_order=idx,
                             )
                             for idx, ing in enumerate(cleaned["ingredients"])
@@ -298,6 +371,7 @@ def recipe_detail_view(request: HttpRequest, recipe_id: str) -> HttpResponse:
                                 name=ing["name"],
                                 quantity=ing["quantity"],
                                 unit=ing["unit"],
+                                preparation=ing["preparation"],
                                 sort_order=idx,
                             )
                             for idx, ing in enumerate(cleaned["ingredients"])

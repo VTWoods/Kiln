@@ -197,7 +197,8 @@ export default function AddToShoppingListModal({
               Add to Shopping List
             </h2>
             <p className="mt-0.5 truncate text-xs text-stone-500">
-              {recipeTitle} — uncheck anything you already have at home
+              {recipeTitle} — uncheck what you already have (duplicates merge
+              automatically)
             </p>
           </div>
           <button

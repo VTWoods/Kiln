@@ -112,6 +112,8 @@ class RecipeImportAndCollectionSmokeTests(TestCase):
                     self.assertEqual(preview["title"], "All-American Beef Stew")
                     self.assertEqual(preview["servings"], 6)
                     self.assertEqual(len(preview["ingredients"]), 2)
+                    self.assertEqual(preview["ingredients"][0]["unit"], "pound")
+                    self.assertIn("chunks", preview["ingredients"][0]["preparation"])
                     self.assertEqual(preview["image_url"], f"{base}/images/beef-stew.jpg")
 
                     # 2. Save previewed recipe (caches selected photo locally)
@@ -157,6 +159,37 @@ class RecipeImportAndCollectionSmokeTests(TestCase):
                     self.assertEqual(self.client.get(saved["image_url"]).status_code, 404)
         finally:
             server.shutdown()
+
+    def test_bookmarklet_and_paste_html_import_smoke(self) -> None:
+        # 1. Bookmarklet form POST with raw HTML (no server-side fetch needed!)
+        bm_res = self.client.post(
+            "/api/recipes/bookmarklet",
+            data={
+                "url": "https://www.seriouseats.com/all-american-beef-stew-recipe",
+                "html": SERIOUS_EATS_STYLE_HTML.decode("utf-8"),
+            },
+        )
+        self.assertEqual(bm_res.status_code, 303)
+        self.assertIn("/recipes?import_draft=", bm_res["Location"])
+        token = bm_res["Location"].split("import_draft=", 1)[1]
+
+        draft = self.client.get(f"/api/recipes/import-draft/{token}")
+        self.assertEqual(draft.status_code, 200)
+        self.assertEqual(draft.json()["title"], "All-American Beef Stew")
+
+        # 2. Direct Paste HTML via import-preview JSON endpoint
+        paste_res = self.client.post(
+            "/api/recipes/import-preview",
+            data=json.dumps(
+                {
+                    "url": "https://www.seriouseats.com/all-american-beef-stew-recipe",
+                    "html": SERIOUS_EATS_STYLE_HTML.decode("utf-8"),
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(paste_res.status_code, 200)
+        self.assertEqual(paste_res.json()["title"], "All-American Beef Stew")
 
 
 class ShoppingListSmokeTests(TestCase):
@@ -215,9 +248,32 @@ class ShoppingListSmokeTests(TestCase):
         self.assertEqual(len(added_items), 2)
         self.assertTrue(all(it["recipe_title"] == "Garlic Butter Pasta" for it in added_items))
 
-        # 4. Check off spaghetti while shopping and clear checked items
+        # 4. Adding a second recipe with overlapping ingredients automatically merges quantities
+        merge_res = self.client.post(
+            f"/api/shopping-lists/{list_id}/items",
+            data=json.dumps(
+                {
+                    "items": [
+                        {
+                            "quantity": "1/2",
+                            "unit": "pound",
+                            "name": "spaghetti",
+                            "recipe_id": recipe["id"],
+                        }
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(merge_res.status_code, 201)
+        merged_items = merge_res.json()["items"]
+        self.assertEqual(len(merged_items), 2)
+        spaghetti = next(it for it in merged_items if it["name"] == "spaghetti")
+        self.assertEqual((spaghetti["quantity"], spaghetti["unit"]), ("1 1/2", "pound"))
+
+        # 5. Check off spaghetti while shopping and clear checked items
         check_res = self.client.patch(
-            f"/api/shopping-lists/{list_id}/items/{added_items[0]['id']}",
+            f"/api/shopping-lists/{list_id}/items/{spaghetti['id']}",
             data=json.dumps({"checked": True}),
             content_type="application/json",
         )

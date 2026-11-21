@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import Recipe, ShoppingList, ShoppingListItem
+from api.models import ShoppingList, ShoppingListItem
+from api.services.shopping_list_merger import merge_shopping_list_items
 from api.views import iso_timestamp, parse_json_body, parse_positive_int
 
 
@@ -162,33 +162,8 @@ def shopping_list_items_view(request: HttpRequest, list_id: str) -> JsonResponse
     except ShoppingList.DoesNotExist:
         return JsonResponse({"error": "shopping list not found"}, status=404)
 
-    existing_recipe_ids = set(
-        Recipe.objects.filter(
-            pk__in=[it["recipe_id"] for it in valid_items if it["recipe_id"]]
-        ).values_list("id", flat=True)
-    )
-
-    with transaction.atomic():
-        ShoppingListItem.objects.bulk_create(
-            [
-                ShoppingListItem(
-                    shopping_list=sl,
-                    name=it["name"],
-                    quantity=it["quantity"],
-                    unit=it["unit"],
-                    checked=False,
-                    recipe_id=(
-                        it["recipe_id"]
-                        if it["recipe_id"] in existing_recipe_ids
-                        else None
-                    ),
-                )
-                for it in valid_items
-            ]
-        )
-        sl.updated_at = timezone.now()
-        sl.save(update_fields=["updated_at"])
-
+    merge_shopping_list_items(sl, valid_items)
+    sl.refresh_from_db()
     return JsonResponse(_serialize_list(sl, include_items=True), status=201)
 
 

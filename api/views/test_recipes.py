@@ -6,8 +6,14 @@ from unittest.mock import patch
 
 from django.test import Client, TestCase
 
-from api.services.fetcher import InvalidURLError, ParseFailedError, SafeFetcher
+from api.services.fetcher import (
+    FetchFailedError,
+    InvalidURLError,
+    ParseFailedError,
+    SafeFetcher,
+)
 from api.services.images import ImageStore
+from api.services.import_drafts import draft_store
 from api.services.importer import ImportedIngredient, ImportedRecipe, RecipeImporter
 from api.testing_utils import PNG_1X1, start_fixture_server
 
@@ -16,8 +22,16 @@ class _StubImporter(RecipeImporter):
     def __init__(self, preview: ImportedRecipe | None = None, err: Exception | None = None) -> None:
         self._preview = preview
         self._err = err
+        self.used_html = False
 
     def import_url(self, raw_url: str) -> ImportedRecipe:
+        if self._err is not None:
+            raise self._err
+        assert self._preview is not None
+        return self._preview
+
+    def import_html(self, raw_url: str, html_bytes: bytes) -> ImportedRecipe:
+        self.used_html = True
         if self._err is not None:
             raise self._err
         assert self._preview is not None
@@ -72,6 +86,63 @@ class RecipesViewTests(TestCase):
             )
         self.assertEqual(unparsed.status_code, 422)
 
+        # HTTP 403 returns blocked=True so UI offers Paste HTML / Bookmarklet
+        with patch(
+            "api.views.recipes.get_importer",
+            return_value=_StubImporter(err=FetchFailedError("remote server returned HTTP 403")),
+        ):
+            blocked = self.client.post(
+                "/api/recipes/import-preview",
+                data=json.dumps({"url": "https://www.seriouseats.com/pot-roast"}),
+                content_type="application/json",
+            )
+        self.assertEqual(blocked.status_code, 502)
+        self.assertTrue(blocked.json().get("blocked"))
+
+        # Client-supplied HTML routes through import_html
+        html_stub = _StubImporter(preview=preview)
+        with patch("api.views.recipes.get_importer", return_value=html_stub):
+            html_res = self.client.post(
+                "/api/recipes/import-preview",
+                data=json.dumps({"url": "https://example.com/soup", "html": "<html>...</html>"}),
+                content_type="application/json",
+            )
+        self.assertEqual(html_res.status_code, 200)
+        self.assertTrue(html_stub.used_html)
+
+    def test_bookmarklet_post_and_draft_retrieval(self) -> None:
+        draft_store.clear()
+        preview = ImportedRecipe(
+            title="Perfect Pot Roast",
+            description="",
+            instructions="Braise.",
+            servings=6,
+            prep_minutes=15,
+            cook_minutes=180,
+            source_url="https://www.seriouseats.com/perfect-pot-roast-recipe-pioneer-woman",
+            image_url="",
+            candidate_images=[],
+            ingredients=[],
+        )
+        with patch("api.views.recipes.get_importer", return_value=_StubImporter(preview=preview)):
+            res = self.client.post(
+                "/api/recipes/bookmarklet",
+                data={
+                    "url": "https://www.seriouseats.com/perfect-pot-roast-recipe-pioneer-woman",
+                    "html": "<html><body>recipe</body></html>",
+                },
+            )
+        self.assertEqual(res.status_code, 303)
+        location = res["Location"]
+        self.assertTrue(location.startswith("/recipes?import_draft="))
+        token = location.split("import_draft=", 1)[1]
+
+        draft_res = self.client.get(f"/api/recipes/import-draft/{token}")
+        self.assertEqual(draft_res.status_code, 200)
+        self.assertEqual(draft_res.json()["title"], "Perfect Pot Roast")
+
+        self.assertEqual(self.client.get("/api/recipes/import-draft/doesnotexist").status_code, 404)
+
     def test_recipe_crud_and_local_image_lifecycle(self) -> None:
         img_server, base = start_fixture_server(
             {
@@ -101,7 +172,12 @@ class RecipesViewTests(TestCase):
                                 "source_url": "https://example.com/chili",
                                 "image_url": f"{base}/first.png",
                                 "ingredients": [
-                                    {"quantity": "1", "unit": "lb", "name": "ground beef"}
+                                    {
+                                        "quantity": "1",
+                                        "unit": "pound",
+                                        "name": "ground beef",
+                                        "preparation": "browned",
+                                    }
                                 ],
                             }
                         ),
@@ -109,6 +185,7 @@ class RecipesViewTests(TestCase):
                     )
                     self.assertEqual(c_res.status_code, 201)
                     created = c_res.json()
+                    self.assertEqual(created["ingredients"][0]["preparation"], "browned")
                     first_img = created["image_url"]
                     self.assertTrue(first_img.startswith("/api/images/"))
                     self.assertEqual(self.client.get(first_img).status_code, 200)

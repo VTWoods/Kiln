@@ -4,6 +4,7 @@ export type RecipeIngredient = {
   name: string;
   quantity: string;
   unit: string;
+  preparation: string;
   sort_order: number;
 };
 
@@ -28,6 +29,7 @@ export type ImportedIngredient = {
   quantity: string;
   unit: string;
   name: string;
+  preparation: string;
 };
 
 export type ImportedRecipe = {
@@ -47,6 +49,7 @@ export type IngredientInput = {
   quantity: string;
   unit: string;
   name: string;
+  preparation?: string;
 };
 
 export type SaveRecipePayload = {

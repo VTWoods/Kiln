@@ -33,6 +33,7 @@ class RecipeIngredient(models.Model):
     name = models.TextField()
     quantity = models.TextField(blank=True, default="")
     unit = models.TextField(blank=True, default="")
+    preparation = models.TextField(blank=True, default="")
     sort_order = models.IntegerField(default=0)
 
     class Meta:

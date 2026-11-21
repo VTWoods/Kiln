@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { createRecipe, importRecipePreview } from "../api/recipes";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ApiError, createRecipe, importRecipePreview } from "../api/recipes";
 import {
   formatHostname,
   isSafeHttpUrl,
@@ -9,31 +9,108 @@ import {
 } from "../types/recipe";
 
 type Props = {
+  initialPreview?: ImportedRecipe | null;
   onClose: () => void;
   onSaved: (recipe: Recipe) => void;
 };
 
-type Step = "url" | "preview";
+type Step = "source" | "preview";
+type SourceMode = "url" | "html" | "bookmarklet";
+type EditableIngredient = IngredientInput & { raw?: string };
 
-export default function ImportRecipeModal({ onClose, onSaved }: Props) {
-  const [step, setStep] = useState<Step>("url");
-  const [urlInput, setUrlInput] = useState("");
+function buildBookmarkletCode(origin: string): string {
+  const cleanOrigin = origin.trim().replace(/\/+$/, "");
+  const endpoint = `${cleanOrigin}/api/recipes/bookmarklet`;
+  return (
+    "javascript:(function(){" +
+    "var f=document.createElement('form');" +
+    "f.method='POST';" +
+    `f.action=${JSON.stringify(endpoint)};` +
+    "f.target='_blank';" +
+    "f.style.display='none';" +
+    "var u=document.createElement('input');" +
+    "u.type='hidden';u.name='url';u.value=location.href;" +
+    "var h=document.createElement('textarea');" +
+    "h.name='html';h.value=document.documentElement.outerHTML;" +
+    "f.appendChild(u);f.appendChild(h);" +
+    "document.body.appendChild(f);f.submit();f.remove();" +
+    "})();"
+  );
+}
+
+export default function ImportRecipeModal({
+  initialPreview,
+  onClose,
+  onSaved,
+}: Props) {
+  const [step, setStep] = useState<Step>(initialPreview ? "preview" : "source");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("url");
+  const [urlInput, setUrlInput] = useState(initialPreview?.source_url || "");
+  const [htmlInput, setHtmlInput] = useState("");
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [wasBlocked, setWasBlocked] = useState(false);
+
+  // Bookmarklet helper state
+  const [bookmarkletOrigin, setBookmarkletOrigin] = useState(
+    () => window.location.origin,
+  );
+  const [copiedBookmarklet, setCopiedBookmarklet] = useState(false);
+  const bookmarkletLinkRef = useRef<HTMLAnchorElement | null>(null);
 
   // Preview editable state
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [servings, setServings] = useState(1);
-  const [prepMinutes, setPrepMinutes] = useState(0);
-  const [cookMinutes, setCookMinutes] = useState(0);
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [selectedImage, setSelectedImage] = useState("");
-  const [candidateImages, setCandidateImages] = useState<string[]>([]);
+  const [title, setTitle] = useState(initialPreview?.title || "");
+  const [description, setDescription] = useState(
+    initialPreview?.description || "",
+  );
+  const [instructions, setInstructions] = useState(
+    initialPreview?.instructions || "",
+  );
+  const [servings, setServings] = useState(
+    initialPreview && initialPreview.servings > 0 ? initialPreview.servings : 1,
+  );
+  const [prepMinutes, setPrepMinutes] = useState(
+    initialPreview && initialPreview.prep_minutes >= 0
+      ? initialPreview.prep_minutes
+      : 0,
+  );
+  const [cookMinutes, setCookMinutes] = useState(
+    initialPreview && initialPreview.cook_minutes >= 0
+      ? initialPreview.cook_minutes
+      : 0,
+  );
+  const [sourceUrl, setSourceUrl] = useState(initialPreview?.source_url || "");
+  const [selectedImage, setSelectedImage] = useState(
+    initialPreview?.image_url ||
+      (initialPreview?.candidate_images &&
+        initialPreview.candidate_images[0]) ||
+      "",
+  );
+  const [candidateImages, setCandidateImages] = useState<string[]>(
+    initialPreview?.candidate_images || [],
+  );
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
-  const [ingredients, setIngredients] = useState<IngredientInput[]>([]);
+  const [ingredients, setIngredients] = useState<EditableIngredient[]>(() =>
+    initialPreview?.ingredients && initialPreview.ingredients.length > 0
+      ? initialPreview.ingredients.map((i) => ({
+          raw: i.raw,
+          quantity: i.quantity,
+          unit: i.unit,
+          name: i.name,
+          preparation: i.preparation || "",
+        }))
+      : [],
+  );
+
+  const bookmarkletCode = buildBookmarkletCode(bookmarkletOrigin);
+
+  useEffect(() => {
+    const el = bookmarkletLinkRef.current;
+    if (el) {
+      el.setAttribute("href", bookmarkletCode);
+    }
+  }, [bookmarkletCode, sourceMode, step]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -63,34 +140,55 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
     setIngredients(
       preview.ingredients && preview.ingredients.length > 0
         ? preview.ingredients.map((i) => ({
+            raw: i.raw,
             quantity: i.quantity,
             unit: i.unit,
             name: i.name,
+            preparation: i.preparation || "",
           }))
-        : [{ quantity: "", unit: "", name: "" }],
+        : [{ quantity: "", unit: "", name: "", preparation: "" }],
     );
     setStep("preview");
   };
 
   const handleFetch = async (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = urlInput.trim();
-    if (!trimmed) {
+    const trimmedUrl = urlInput.trim();
+    if (!trimmedUrl) {
       setError("Please enter a recipe URL.");
+      return;
+    }
+    if (sourceMode === "html" && !htmlInput.trim()) {
+      setError("Please paste the recipe page HTML.");
       return;
     }
 
     setError(null);
+    setWasBlocked(false);
     setFetching(true);
     try {
-      const preview = await importRecipePreview(trimmed);
+      const preview = await importRecipePreview(
+        trimmedUrl,
+        sourceMode === "html" ? htmlInput : undefined,
+      );
       applyPreview(preview);
     } catch (err: unknown) {
+      setWasBlocked(err instanceof ApiError && err.blocked);
       setError(
         err instanceof Error ? err.message : "Failed to fetch recipe preview.",
       );
     } finally {
       setFetching(false);
+    }
+  };
+
+  const handleCopyBookmarklet = async () => {
+    try {
+      await navigator.clipboard.writeText(bookmarkletCode);
+      setCopiedBookmarklet(true);
+      setTimeout(() => setCopiedBookmarklet(false), 2000);
+    } catch {
+      setError("Could not copy to clipboard. Drag the Save to Kiln button to your bookmarks bar instead.");
     }
   };
 
@@ -118,6 +216,7 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
             quantity: ing.quantity.trim(),
             unit: ing.unit.trim(),
             name: ing.name.trim(),
+            preparation: (ing.preparation || "").trim(),
           }))
           .filter((ing) => ing.name !== ""),
       });
@@ -144,7 +243,10 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
   };
 
   const addIngredient = () => {
-    setIngredients((prev) => [...prev, { quantity: "", unit: "", name: "" }]);
+    setIngredients((prev) => [
+      ...prev,
+      { quantity: "", unit: "", name: "", preparation: "" },
+    ]);
   };
 
   const markImageFailed = (imgUrl: string) => {
@@ -159,6 +261,14 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
   };
 
   const visibleCandidates = candidateImages.filter((u) => !failedImages[u]);
+
+  const tabClass = (mode: SourceMode) =>
+    [
+      "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+      sourceMode === mode
+        ? "bg-amber-100 text-amber-900"
+        : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
+    ].join(" ");
 
   return (
     <div
@@ -175,13 +285,13 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
               id="import-modal-title"
               className="text-lg font-semibold text-stone-900"
             >
-              {step === "url"
-                ? "Import Recipe from URL"
+              {step === "source"
+                ? "Import Recipe"
                 : "Preview & Confirm Recipe"}
             </h2>
             <p className="text-xs text-stone-500">
-              {step === "url"
-                ? "Paste a recipe link to extract ingredients, instructions, and photos."
+              {step === "source"
+                ? "Import by URL, paste HTML for sites that block bots, or use the browser bookmarklet."
                 : "Pick a photo and review the extracted details before saving."}
             </p>
           </div>
@@ -197,64 +307,221 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
         </div>
 
         {/* Body */}
-        {step === "url" ? (
-          <form onSubmit={handleFetch} className="space-y-4 p-6">
-            <div>
-              <label
-                htmlFor="recipe-url"
-                className="block text-sm font-medium text-stone-700"
-              >
-                Recipe URL
-              </label>
-              <input
-                id="recipe-url"
-                type="url"
-                required
-                autoFocus
-                placeholder="https://www.example.com/recipes/roasted-tomato-soup"
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                disabled={fetching}
-                className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50"
-              />
-            </div>
-
-            {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
-                {error}
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-2">
+        {step === "source" ? (
+          <div className="space-y-4 overflow-y-auto p-6">
+            {/* Mode Tabs */}
+            <div className="flex items-center gap-1 border-b border-stone-200 pb-3">
               <button
                 type="button"
-                onClick={onClose}
-                disabled={fetching}
-                className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                onClick={() => {
+                  setSourceMode("url");
+                  setError(null);
+                  setWasBlocked(false);
+                }}
+                className={tabClass("url")}
               >
-                Cancel
+                From URL
               </button>
               <button
-                type="submit"
-                disabled={fetching}
-                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60"
+                type="button"
+                onClick={() => {
+                  setSourceMode("html");
+                  setError(null);
+                  setWasBlocked(false);
+                }}
+                className={tabClass("html")}
               >
-                {fetching ? (
-                  <>
-                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                    Fetching recipe…
-                  </>
-                ) : (
-                  "Fetch Preview"
-                )}
+                Paste HTML
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSourceMode("bookmarklet");
+                  setError(null);
+                  setWasBlocked(false);
+                }}
+                className={tabClass("bookmarklet")}
+              >
+                Bookmarklet
               </button>
             </div>
-          </form>
+
+            {sourceMode === "bookmarklet" ? (
+              <div className="space-y-4">
+                <p className="text-sm text-stone-600">
+                  Drag the button below onto your browser&apos;s bookmarks bar.
+                  Whenever you&apos;re viewing any recipe (including sites behind
+                  Cloudflare or a login), click{" "}
+                  <strong className="text-stone-900">Save to Kiln</strong> to
+                  send the page straight to this preview window.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                  <a
+                    ref={bookmarkletLinkRef}
+                    href="#save-to-kiln"
+                    onClick={(e) => e.preventDefault()}
+                    draggable
+                    className="inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-amber-700 active:cursor-grabbing"
+                    title="Drag this button to your bookmarks bar"
+                  >
+                    Save to Kiln
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyBookmarklet()}
+                    className="rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                  >
+                    {copiedBookmarklet ? "Copied!" : "Copy Bookmarklet URL"}
+                  </button>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="bookmarklet-origin"
+                    className="block text-xs font-medium text-stone-600"
+                  >
+                    Kiln Server Address (used by the bookmarklet)
+                  </label>
+                  <input
+                    id="bookmarklet-origin"
+                    type="url"
+                    value={bookmarkletOrigin}
+                    onChange={(e) => setBookmarkletOrigin(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+
+                {error && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleFetch} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="recipe-url"
+                    className="block text-sm font-medium text-stone-700"
+                  >
+                    Recipe URL
+                  </label>
+                  <input
+                    id="recipe-url"
+                    type="url"
+                    required
+                    autoFocus
+                    placeholder="https://www.seriouseats.com/perfect-pot-roast-recipe-pioneer-woman"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    disabled={fetching}
+                    className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50"
+                  />
+                </div>
+
+                {sourceMode === "html" && (
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="recipe-html"
+                        className="block text-sm font-medium text-stone-700"
+                      >
+                        Page HTML
+                      </label>
+                      <span className="text-xs text-stone-500">
+                        In your browser: View Source (Ctrl+U / ⌘⌥U) → Select All
+                        → Copy
+                      </span>
+                    </div>
+                    <textarea
+                      id="recipe-html"
+                      required
+                      rows={6}
+                      placeholder="<!doctype html>..."
+                      value={htmlInput}
+                      onChange={(e) => setHtmlInput(e.target.value)}
+                      disabled={fetching}
+                      className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2 font-mono text-xs text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50"
+                    />
+                  </div>
+                )}
+
+                {error && (
+                  <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+                    <p>{error}</p>
+                    {wasBlocked && sourceMode === "url" && (
+                      <div className="flex flex-wrap gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSourceMode("html");
+                            setError(null);
+                            setWasBlocked(false);
+                          }}
+                          className="rounded-md bg-red-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-800"
+                        >
+                          Switch to Paste HTML →
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSourceMode("bookmarklet");
+                            setError(null);
+                            setWasBlocked(false);
+                          }}
+                          className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100"
+                        >
+                          Use Bookmarklet →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    disabled={fetching}
+                    className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={fetching}
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    {fetching ? (
+                      <>
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        {sourceMode === "html"
+                          ? "Parsing HTML…"
+                          : "Fetching recipe…"}
+                      </>
+                    ) : sourceMode === "html" ? (
+                      "Parse HTML Preview"
+                    ) : (
+                      "Fetch Preview"
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         ) : (
-          <form
-            onSubmit={handleSave}
-            className="flex min-h-0 flex-1 flex-col"
-          >
+          <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
             <div className="flex-1 space-y-6 overflow-y-auto p-6">
               {error && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
@@ -470,7 +737,11 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
 
                 <div className="space-y-2">
                   {ingredients.map((ing, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
+                    <div
+                      key={idx}
+                      className="flex flex-wrap items-center gap-2 sm:flex-nowrap"
+                      title={ing.raw ? `Original: ${ing.raw}` : undefined}
+                    >
                       <input
                         type="text"
                         placeholder="Qty"
@@ -478,7 +749,7 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
                         onChange={(e) =>
                           updateIngredient(idx, "quantity", e.target.value)
                         }
-                        className="w-20 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
+                        className="w-16 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
                       />
                       <input
                         type="text"
@@ -487,16 +758,25 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
                         onChange={(e) =>
                           updateIngredient(idx, "unit", e.target.value)
                         }
-                        className="w-24 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
+                        className="w-28 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
                       />
                       <input
                         type="text"
-                        placeholder="Ingredient name"
+                        placeholder="Ingredient"
                         value={ing.name}
                         onChange={(e) =>
                           updateIngredient(idx, "name", e.target.value)
                         }
                         className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Prep / notes"
+                        value={ing.preparation || ""}
+                        onChange={(e) =>
+                          updateIngredient(idx, "preparation", e.target.value)
+                        }
+                        className="w-full rounded-lg border border-stone-200 bg-stone-50/70 px-2.5 py-1.5 text-sm text-stone-700 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white focus:outline-none sm:w-44"
                       />
                       <button
                         type="button"
@@ -535,12 +815,12 @@ export default function ImportRecipeModal({ onClose, onSaved }: Props) {
                 type="button"
                 onClick={() => {
                   setError(null);
-                  setStep("url");
+                  setStep("source");
                 }}
                 disabled={saving}
                 className="text-sm font-medium text-stone-600 hover:text-stone-900 disabled:opacity-50"
               >
-                ← Change URL
+                ← Change Source
               </button>
               <div className="flex items-center gap-2">
                 <button

@@ -11,6 +11,7 @@ DOCKER_VOLUME ?= kiln-data:/data
 install:
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements.txt
+	.venv/bin/python3 -m nltk.downloader -d .venv/nltk_data averaged_perceptron_tagger_eng
 	npm --prefix web install
 
 migrate:

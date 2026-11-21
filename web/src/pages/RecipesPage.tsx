@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { listRecipes } from "../api/recipes";
+import { Link, useSearchParams } from "react-router-dom";
+import { getImportDraft, listRecipes } from "../api/recipes";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import ImportRecipeModal from "../components/ImportRecipeModal";
 import {
   formatHostname,
   formatMinutes,
   isSafeHttpUrl,
+  type ImportedRecipe,
   type Recipe,
 } from "../types/recipe";
 
 export default function RecipesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [draftPreview, setDraftPreview] = useState<ImportedRecipe | null>(null);
   const [recipeForList, setRecipeForList] = useState<Recipe | null>(null);
   const [addedNotice, setAddedNotice] = useState<{
     listId: number;
@@ -40,8 +43,40 @@ export default function RecipesPage() {
     loadRecipes();
   }, []);
 
+  useEffect(() => {
+    const draftToken = searchParams.get("import_draft");
+    const importError = searchParams.get("import_error");
+    if (!draftToken && !importError) return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("import_draft");
+    nextParams.delete("import_error");
+    setSearchParams(nextParams, { replace: true });
+
+    if (importError) {
+      setError(importError);
+      return;
+    }
+
+    if (draftToken) {
+      getImportDraft(draftToken)
+        .then((preview) => {
+          setDraftPreview(preview);
+          setShowImportModal(true);
+        })
+        .catch((err: unknown) => {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load bookmarklet recipe preview.",
+          );
+        });
+    }
+  }, [searchParams, setSearchParams]);
+
   const handleImported = (created: Recipe) => {
     setRecipes((prev) => [created, ...prev]);
+    setDraftPreview(null);
     setShowImportModal(false);
   };
 
@@ -210,7 +245,11 @@ export default function RecipesPage() {
 
       {showImportModal && (
         <ImportRecipeModal
-          onClose={() => setShowImportModal(false)}
+          initialPreview={draftPreview}
+          onClose={() => {
+            setDraftPreview(null);
+            setShowImportModal(false);
+          }}
           onSaved={handleImported}
         />
       )}

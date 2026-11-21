@@ -30,7 +30,7 @@ class ImporterServiceTests(SimpleTestCase):
             self.assertEqual(len(pasta.ingredients), 4)
             self.assertEqual(
                 (pasta.ingredients[0].quantity, pasta.ingredients[0].unit, pasta.ingredients[0].name),
-                ("1", "lb", "spaghetti"),
+                ("1", "pound", "spaghetti"),
             )
             self.assertIn("Boil salted water", pasta.instructions)
             self.assertEqual(len(pasta.candidate_images), 4)
@@ -44,3 +44,19 @@ class ImporterServiceTests(SimpleTestCase):
                 imp.import_url(f"{base}/blog")
         finally:
             server.shutdown()
+
+    def test_import_html_parses_without_network_fetch(self) -> None:
+        imp = RecipeScrapersImporter()  # SSRF protection on; no network call is made
+        got = imp.import_html(
+            "https://www.seriouseats.com/all-american-beef-stew-recipe",
+            SERIOUS_EATS_STYLE_HTML,
+        )
+        self.assertEqual(got.title, "All-American Beef Stew")
+        self.assertEqual(
+            got.source_url,
+            "https://www.seriouseats.com/all-american-beef-stew-recipe",
+        )
+        self.assertEqual(
+            got.image_url,
+            "https://www.seriouseats.com/images/beef-stew.jpg",
+        )
