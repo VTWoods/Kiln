@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ManagePantryStaplesModal from "../components/ManagePantryStaplesModal";
 import {
@@ -48,8 +48,75 @@ export default function ShoppingListsPage() {
   const [itemUnit, setItemUnit] = useState("");
   const [itemName, setItemName] = useState("");
   const [addingItem, setAddingItem] = useState(false);
-  const [groupByAisle, setGroupByAisle] = useState(true);
+  const [groupMode, setGroupMode] = useState<"aisle" | "recipe">("aisle");
   const [showStaplesModal, setShowStaplesModal] = useState(false);
+  const [openMenuItemId, setOpenMenuItemId] = useState<number | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const toggleGroupCollapsed = (groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  };
+  // Items just checked off: grayed out in place for 5s, then faded out before moving to the bottom
+  const [pendingCheckIds, setPendingCheckIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [fadingCheckIds, setFadingCheckIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const checkTimersRef = useRef<
+    Map<number, { fadeTimer: number; moveTimer: number }>
+  >(new Map());
+
+  const clearItemTimers = useCallback((itemId: number) => {
+    const existing = checkTimersRef.current.get(itemId);
+    if (existing) {
+      window.clearTimeout(existing.fadeTimer);
+      window.clearTimeout(existing.moveTimer);
+      checkTimersRef.current.delete(itemId);
+    }
+    setPendingCheckIds((prev) => {
+      if (!prev.has(itemId)) return prev;
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+    setFadingCheckIds((prev) => {
+      if (!prev.has(itemId)) return prev;
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }, []);
+
+  const clearAllCheckTimers = useCallback(() => {
+    for (const timers of checkTimersRef.current.values()) {
+      window.clearTimeout(timers.fadeTimer);
+      window.clearTimeout(timers.moveTimer);
+    }
+    checkTimersRef.current.clear();
+    setPendingCheckIds(new Set());
+    setFadingCheckIds(new Set());
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const timers of checkTimersRef.current.values()) {
+        window.clearTimeout(timers.fadeTimer);
+        window.clearTimeout(timers.moveTimer);
+      }
+      checkTimersRef.current.clear();
+    };
+  }, []);
 
   const initialListId = Number(searchParams.get("list") || 0);
 
@@ -153,6 +220,9 @@ export default function ShoppingListsPage() {
   }, [activeList?.id, loadActiveList]);
 
   const handleSelectList = (id: number) => {
+    clearAllCheckTimers();
+    setOpenMenuItemId(null);
+    setCollapsedGroups(new Set());
     setSearchParams({ list: String(id) });
     void loadActiveList(id);
   };
@@ -247,6 +317,27 @@ export default function ShoppingListsPage() {
     if (!activeList) return;
     const nextChecked = !item.checked;
 
+    // Manage the 5s gray-out -> 500ms fade -> move-to-bottom transition
+    clearItemTimers(item.id);
+    if (nextChecked) {
+      setPendingCheckIds((prev) => {
+        const next = new Set(prev);
+        next.add(item.id);
+        return next;
+      });
+      const fadeTimer = window.setTimeout(() => {
+        setFadingCheckIds((prev) => {
+          const next = new Set(prev);
+          next.add(item.id);
+          return next;
+        });
+      }, 5000);
+      const moveTimer = window.setTimeout(() => {
+        clearItemTimers(item.id);
+      }, 5500);
+      checkTimersRef.current.set(item.id, { fadeTimer, moveTimer });
+    }
+
     // Optimistic update
     setActiveList((prev) => {
       if (!prev || !prev.items) return prev;
@@ -272,6 +363,7 @@ export default function ShoppingListsPage() {
         ),
       );
     } catch (err: unknown) {
+      clearItemTimers(item.id);
       setError(err instanceof Error ? err.message : "Failed to update item.");
       void loadActiveList(activeList.id);
     }
@@ -279,6 +371,7 @@ export default function ShoppingListsPage() {
 
   const handleDeleteItem = async (item: ShoppingListItem) => {
     if (!activeList) return;
+    clearItemTimers(item.id);
     setError(null);
     try {
       await deleteShoppingListItem(activeList.id, item.id);
@@ -312,6 +405,7 @@ export default function ShoppingListsPage() {
 
   const handleClearChecked = async () => {
     if (!activeList) return;
+    clearAllCheckTimers();
     setError(null);
     try {
       const updated = await clearCheckedShoppingListItems(activeList.id);
@@ -335,8 +429,15 @@ export default function ShoppingListsPage() {
   };
 
   const items = activeList?.items ?? [];
-  const uncheckedItems = items.filter((i) => !i.checked);
-  const checkedItems = items.filter((i) => i.checked);
+  const remainingCount = items.filter((i) => !i.checked).length;
+  const totalCheckedCount = items.length - remainingCount;
+  // Keep recently checked items in place during their 5s gray-out + fade transition
+  const uncheckedItems = items.filter(
+    (i) => !i.checked || pendingCheckIds.has(i.id),
+  );
+  const checkedItems = items.filter(
+    (i) => i.checked && !pendingCheckIds.has(i.id),
+  );
   const availableAisles =
     activeList?.aisles && activeList.aisles.length > 0
       ? activeList.aisles
@@ -365,6 +466,79 @@ export default function ShoppingListsPage() {
       ordered.push({ aisle, items: bucket });
     }
     return ordered;
+  })();
+
+  const groupedByRecipe = (() => {
+    const shared: ShoppingListItem[] = [];
+    const byRecipe = new Map<
+      number,
+      { id: number; title: string; items: ShoppingListItem[] }
+    >();
+    const manual: ShoppingListItem[] = [];
+
+    for (const item of uncheckedItems) {
+      const linked =
+        item.recipes && item.recipes.length > 0
+          ? item.recipes
+          : item.recipe_id && item.recipe_title
+            ? [{ id: item.recipe_id, title: item.recipe_title }]
+            : [];
+
+      if (linked.length === 0) {
+        manual.push(item);
+      } else if (linked.length > 1) {
+        shared.push(item);
+      } else {
+        const rec = linked[0];
+        const bucket = byRecipe.get(rec.id);
+        if (bucket) {
+          bucket.items.push(item);
+        } else {
+          byRecipe.set(rec.id, { id: rec.id, title: rec.title, items: [item] });
+        }
+      }
+    }
+
+    const groups: {
+      key: string;
+      label: string;
+      recipeId?: number;
+      showRecipeChips: boolean;
+      items: ShoppingListItem[];
+    }[] = [];
+
+    if (shared.length > 0) {
+      groups.push({
+        key: "shared",
+        label: "Multiple Recipes",
+        showRecipeChips: true,
+        items: shared,
+      });
+    }
+
+    const sortedRecipes = [...byRecipe.values()].sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+    for (const rec of sortedRecipes) {
+      groups.push({
+        key: `recipe-${rec.id}`,
+        label: rec.title,
+        recipeId: rec.id,
+        showRecipeChips: false,
+        items: rec.items,
+      });
+    }
+
+    if (manual.length > 0) {
+      groups.push({
+        key: "manual",
+        label: "Other Items",
+        showRecipeChips: false,
+        items: manual,
+      });
+    }
+
+    return groups;
   })();
 
   return (
@@ -502,16 +676,16 @@ export default function ShoppingListsPage() {
           {/* Active list detail */}
           <div className="space-y-4 md:col-span-3">
             {activeList && (
-              <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+              <div className="rounded-2xl border border-stone-200 bg-white p-3.5 shadow-xs sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 pb-4">
                   <div>
                     <h2 className="text-lg font-semibold text-stone-900">
                       {activeList.name}
                     </h2>
                     <p className="text-xs text-stone-500">
-                      {uncheckedItems.length} remaining
-                      {checkedItems.length > 0 &&
-                        ` · ${checkedItems.length} checked off`}
+                      {remainingCount} remaining
+                      {totalCheckedCount > 0 &&
+                        ` · ${totalCheckedCount} checked off`}
                     </p>
                   </div>
 
@@ -523,10 +697,10 @@ export default function ShoppingListsPage() {
                     >
                       <button
                         type="button"
-                        onClick={() => setGroupByAisle(true)}
+                        onClick={() => setGroupMode("aisle")}
                         className={[
                           "rounded-md px-2.5 py-1 font-medium transition-colors",
-                          groupByAisle
+                          groupMode === "aisle"
                             ? "bg-white text-stone-900 shadow-xs"
                             : "text-stone-500 hover:text-stone-700",
                         ].join(" ")}
@@ -535,24 +709,24 @@ export default function ShoppingListsPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setGroupByAisle(false)}
+                        onClick={() => setGroupMode("recipe")}
                         className={[
                           "rounded-md px-2.5 py-1 font-medium transition-colors",
-                          !groupByAisle
+                          groupMode === "recipe"
                             ? "bg-white text-stone-900 shadow-xs"
                             : "text-stone-500 hover:text-stone-700",
                         ].join(" ")}
                       >
-                        Flat
+                        By Recipe
                       </button>
                     </div>
-                    {checkedItems.length > 0 && (
+                    {totalCheckedCount > 0 && (
                       <button
                         type="button"
                         onClick={handleClearChecked}
                         className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
                       >
-                        Clear checked ({checkedItems.length})
+                        Clear checked ({totalCheckedCount})
                       </button>
                     )}
                     <button
@@ -629,67 +803,198 @@ export default function ShoppingListsPage() {
                 ) : (
                   <div className="mt-4 space-y-4">
                     {uncheckedItems.length > 0 &&
-                      (groupByAisle ? (
-                        <div className="space-y-4">
-                          {groupedUnchecked.map((group) => (
-                            <div key={group.aisle}>
-                              <div className="mb-1 flex items-center justify-between border-b border-stone-100 pb-1">
-                                <h3 className="text-xs font-semibold tracking-wide text-stone-500 uppercase">
-                                  {group.aisle}
-                                </h3>
-                                <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500">
-                                  {group.items.length}
-                                </span>
+                      (groupMode === "aisle" ? (
+                        <div className="space-y-3">
+                          {groupedUnchecked.map((group) => {
+                            const collapseKey = `aisle:${group.aisle}`;
+                            const isCollapsed = collapsedGroups.has(collapseKey);
+                            return (
+                              <div key={group.aisle}>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleGroupCollapsed(collapseKey)
+                                  }
+                                  aria-expanded={!isCollapsed}
+                                  className="mb-1 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-100/80 px-2.5 py-2 text-left transition-colors hover:bg-stone-200/70"
+                                >
+                                  <span className="flex min-w-0 items-center gap-1.5">
+                                    <span
+                                      aria-hidden="true"
+                                      className="inline-block w-3.5 text-center text-xs text-stone-400"
+                                    >
+                                      {isCollapsed ? "▸" : "▾"}
+                                    </span>
+                                    <span className="truncate text-xs font-semibold tracking-wide text-stone-700 uppercase">
+                                      {group.aisle}
+                                    </span>
+                                  </span>
+                                  <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-stone-500">
+                                    {group.items.length}
+                                  </span>
+                                </button>
+                                {!isCollapsed && (
+                                  <ul className="divide-y divide-stone-100">
+                                    {group.items.map((item) => (
+                                      <ShoppingListItemRow
+                                        key={item.id}
+                                        item={item}
+                                        aisles={availableAisles}
+                                        pendingCheck={pendingCheckIds.has(
+                                          item.id,
+                                        )}
+                                        fadingOut={fadingCheckIds.has(item.id)}
+                                        menuOpen={openMenuItemId === item.id}
+                                        onToggleMenu={() =>
+                                          setOpenMenuItemId((prev) =>
+                                            prev === item.id ? null : item.id,
+                                          )
+                                        }
+                                        onCloseMenu={() =>
+                                          setOpenMenuItemId(null)
+                                        }
+                                        onToggle={handleToggleItem}
+                                        onDelete={handleDeleteItem}
+                                        onChangeAisle={handleChangeAisle}
+                                      />
+                                    ))}
+                                  </ul>
+                                )}
                               </div>
-                              <ul className="divide-y divide-stone-100">
-                                {group.items.map((item) => (
-                                  <ShoppingListItemRow
-                                    key={item.id}
-                                    item={item}
-                                    aisles={availableAisles}
-                                    onToggle={handleToggleItem}
-                                    onDelete={handleDeleteItem}
-                                    onChangeAisle={handleChangeAisle}
-                                  />
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       ) : (
-                        <ul className="divide-y divide-stone-100">
-                          {uncheckedItems.map((item) => (
-                            <ShoppingListItemRow
-                              key={item.id}
-                              item={item}
-                              aisles={availableAisles}
-                              onToggle={handleToggleItem}
-                              onDelete={handleDeleteItem}
-                              onChangeAisle={handleChangeAisle}
-                            />
-                          ))}
-                        </ul>
+                        <div className="space-y-3">
+                          {groupedByRecipe.map((group) => {
+                            const collapseKey = `recipe:${group.key}`;
+                            const isCollapsed = collapsedGroups.has(collapseKey);
+                            return (
+                              <div key={group.key}>
+                                <div className="mb-1 flex items-center justify-between gap-2 rounded-lg bg-stone-100/80 transition-colors hover:bg-stone-200/70">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      toggleGroupCollapsed(collapseKey)
+                                    }
+                                    aria-expanded={!isCollapsed}
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2.5 py-2 text-left"
+                                  >
+                                    <span
+                                      aria-hidden="true"
+                                      className="inline-block w-3.5 shrink-0 text-center text-xs text-stone-400"
+                                    >
+                                      {isCollapsed ? "▸" : "▾"}
+                                    </span>
+                                    <span
+                                      className={[
+                                        "truncate text-xs font-semibold tracking-wide uppercase",
+                                        group.recipeId
+                                          ? "text-amber-900"
+                                          : "text-stone-700",
+                                      ].join(" ")}
+                                    >
+                                      {group.label}
+                                    </span>
+                                  </button>
+                                  <div className="flex shrink-0 items-center gap-1.5 pr-2.5">
+                                    {group.recipeId && (
+                                      <Link
+                                        to={`/recipes/${group.recipeId}`}
+                                        title={`Open ${group.label}`}
+                                        aria-label={`Open ${group.label}`}
+                                        className="rounded px-1.5 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                                      >
+                                        ↗
+                                      </Link>
+                                    )}
+                                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-stone-500">
+                                      {group.items.length}
+                                    </span>
+                                  </div>
+                                </div>
+                                {!isCollapsed && (
+                                  <ul className="divide-y divide-stone-100">
+                                    {group.items.map((item) => (
+                                      <ShoppingListItemRow
+                                        key={item.id}
+                                        item={item}
+                                        aisles={availableAisles}
+                                        showRecipeChips={group.showRecipeChips}
+                                        showAisleChip
+                                        pendingCheck={pendingCheckIds.has(
+                                          item.id,
+                                        )}
+                                        fadingOut={fadingCheckIds.has(item.id)}
+                                        menuOpen={openMenuItemId === item.id}
+                                        onToggleMenu={() =>
+                                          setOpenMenuItemId((prev) =>
+                                            prev === item.id ? null : item.id,
+                                          )
+                                        }
+                                        onCloseMenu={() =>
+                                          setOpenMenuItemId(null)
+                                        }
+                                        onToggle={handleToggleItem}
+                                        onDelete={handleDeleteItem}
+                                        onChangeAisle={handleChangeAisle}
+                                      />
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       ))}
 
-                    {checkedItems.length > 0 && (
-                      <div className="border-t border-stone-100 pt-3">
-                        <p className="mb-1 text-xs font-medium tracking-wide text-stone-400 uppercase">
-                          Checked off ({checkedItems.length})
-                        </p>
-                        <ul className="divide-y divide-stone-100">
-                          {checkedItems.map((item) => (
-                            <ShoppingListItemRow
-                              key={item.id}
-                              item={item}
-                              aisles={availableAisles}
-                              onToggle={handleToggleItem}
-                              onDelete={handleDeleteItem}
-                              onChangeAisle={handleChangeAisle}
-                            />
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    {checkedItems.length > 0 && (() => {
+                      const checkedCollapsed = collapsedGroups.has("checked");
+                      return (
+                        <div className="border-t border-stone-100 pt-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleGroupCollapsed("checked")}
+                            aria-expanded={!checkedCollapsed}
+                            className="mb-1.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-50 px-2.5 py-2 text-left transition-colors hover:bg-stone-100"
+                          >
+                            <span className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-stone-400 uppercase">
+                              <span
+                                aria-hidden="true"
+                                className="inline-block w-3.5 text-center"
+                              >
+                                {checkedCollapsed ? "▸" : "▾"}
+                              </span>
+                              Checked off
+                            </span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-stone-400">
+                              {checkedItems.length}
+                            </span>
+                          </button>
+                          {!checkedCollapsed && (
+                            <ul className="divide-y divide-stone-100">
+                              {checkedItems.map((item) => (
+                                <ShoppingListItemRow
+                                  key={item.id}
+                                  item={item}
+                                  aisles={availableAisles}
+                                  menuOpen={openMenuItemId === item.id}
+                                  onToggleMenu={() =>
+                                    setOpenMenuItemId((prev) =>
+                                      prev === item.id ? null : item.id,
+                                    )
+                                  }
+                                  onCloseMenu={() => setOpenMenuItemId(null)}
+                                  onToggle={handleToggleItem}
+                                  onDelete={handleDeleteItem}
+                                  onChangeAisle={handleChangeAisle}
+                                />
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -707,18 +1012,35 @@ export default function ShoppingListsPage() {
 function ShoppingListItemRow({
   item,
   aisles,
+  showRecipeChips = true,
+  showAisleChip = false,
+  pendingCheck = false,
+  fadingOut = false,
+  menuOpen,
+  onToggleMenu,
+  onCloseMenu,
   onToggle,
   onDelete,
   onChangeAisle,
 }: {
   item: ShoppingListItem;
   aisles: string[];
+  showRecipeChips?: boolean;
+  showAisleChip?: boolean;
+  pendingCheck?: boolean;
+  fadingOut?: boolean;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
   onToggle: (item: ShoppingListItem) => void;
   onDelete: (item: ShoppingListItem) => void;
   onChangeAisle: (item: ShoppingListItem, aisle: string) => void;
 }) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const amount = [item.quantity, item.unit].filter(Boolean).join(" ");
   const currentAisle = item.aisle || "Other";
+  const isSettledChecked = item.checked && !pendingCheck;
+  const isGrayed = pendingCheck || isSettledChecked;
   const recipeChips =
     item.recipes && item.recipes.length > 0
       ? item.recipes
@@ -726,76 +1048,162 @@ function ShoppingListItemRow({
         ? [{ id: item.recipe_id, title: item.recipe_title }]
         : [];
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onCloseMenu();
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseMenu();
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen, onCloseMenu]);
+
   return (
-    <li className="flex items-center justify-between gap-3 py-2.5 text-sm">
-      <div className="flex min-w-0 items-center gap-3">
+    <li
+      className={[
+        "flex items-start justify-between gap-2 py-3 transition-all duration-500",
+        fadingOut
+          ? "scale-[0.98] opacity-0"
+          : pendingCheck
+            ? "opacity-55"
+            : "opacity-100",
+      ].join(" ")}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-3">
         <input
+          id={`shopping-item-${item.id}`}
           type="checkbox"
           checked={item.checked}
           onChange={() => onToggle(item)}
-          className="h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
+          className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
         />
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span
+
+        <div className="min-w-0 flex-1">
+          <label
+            htmlFor={`shopping-item-${item.id}`}
             className={[
-              "break-words",
-              item.checked ? "text-stone-400 line-through" : "text-stone-800",
+              "block cursor-pointer text-[15px] leading-snug break-words transition-colors duration-300 sm:text-sm",
+              isSettledChecked
+                ? "text-stone-400 line-through"
+                : pendingCheck
+                  ? "text-stone-400"
+                  : "text-stone-900",
             ].join(" ")}
           >
             {amount && (
               <span
                 className={[
-                  "mr-1.5 font-medium",
-                  item.checked ? "text-stone-400" : "text-amber-800",
+                  "mr-1.5 font-semibold transition-colors duration-300",
+                  isGrayed ? "text-stone-400" : "text-amber-800",
                 ].join(" ")}
               >
                 {amount}
               </span>
             )}
             {item.name}
-          </span>
+          </label>
 
-          {recipeChips.length > 0 && (
-            <span className="inline-flex flex-wrap items-center gap-1">
-              {recipeChips.map((recipe) => (
-                <Link
-                  key={recipe.id}
-                  to={`/recipes/${recipe.id}`}
-                  className="inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+          {((showRecipeChips && recipeChips.length > 0) || showAisleChip) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              {showAisleChip && (
+                <span
+                  className={[
+                    "inline-block rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    isGrayed
+                      ? "bg-stone-100 text-stone-400"
+                      : "bg-stone-100 text-stone-600",
+                  ].join(" ")}
                 >
-                  {recipe.title}
-                </Link>
-              ))}
-            </span>
+                  {currentAisle}
+                </span>
+              )}
+              {showRecipeChips &&
+                recipeChips.map((recipe) => (
+                  <Link
+                    key={recipe.id}
+                    to={`/recipes/${recipe.id}`}
+                    className={[
+                      "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors",
+                      isGrayed
+                        ? "bg-stone-100 text-stone-400 hover:bg-stone-200"
+                        : "bg-amber-50 text-amber-800 hover:bg-amber-100",
+                    ].join(" ")}
+                  >
+                    {recipe.title}
+                  </Link>
+                ))}
+            </div>
           )}
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
-        {!item.checked && (
-          <select
-            value={currentAisle}
-            onChange={(e) => onChangeAisle(item, e.target.value)}
-            aria-label={`Aisle for ${item.name}`}
-            title="Change aisle (remembered for next time)"
-            className="max-w-[9.5rem] cursor-pointer rounded-md border border-transparent bg-stone-50 px-1.5 py-1 text-[11px] text-stone-500 transition-colors hover:border-stone-200 hover:bg-white hover:text-stone-700 focus:border-amber-400 focus:bg-white focus:text-stone-800 focus:outline-none"
-          >
-            {aisles.map((aisle) => (
-              <option key={aisle} value={aisle}>
-                {aisle}
-              </option>
-            ))}
-          </select>
-        )}
-
+      <div className="relative shrink-0" ref={menuRef}>
         <button
           type="button"
-          onClick={() => onDelete(item)}
-          className="shrink-0 rounded-md px-2 py-1 text-xs text-stone-400 hover:bg-stone-100 hover:text-red-600"
-          aria-label={`Remove ${item.name}`}
+          onClick={onToggleMenu}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label={`Actions for ${item.name}`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-base font-semibold text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700"
         >
-          ✕
+          ⋮
         </button>
+
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-stone-200 bg-white p-2 shadow-lg"
+          >
+            {!item.checked && (
+              <div className="border-b border-stone-100 pb-2">
+                <label
+                  htmlFor={`item-aisle-${item.id}`}
+                  className="mb-1 block px-1 text-[11px] font-semibold tracking-wide text-stone-500 uppercase"
+                >
+                  Move to aisle
+                </label>
+                <select
+                  id={`item-aisle-${item.id}`}
+                  value={currentAisle}
+                  onChange={(e) => {
+                    onChangeAisle(item, e.target.value);
+                    onCloseMenu();
+                  }}
+                  className="w-full cursor-pointer rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-800 focus:border-amber-500 focus:bg-white focus:outline-none"
+                >
+                  {aisles.map((aisle) => (
+                    <option key={aisle} value={aisle}>
+                      {aisle}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onCloseMenu();
+                onDelete(item);
+              }}
+              className={[
+                "block w-full rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50",
+                !item.checked ? "mt-1" : "",
+              ].join(" ")}
+            >
+              Remove item
+            </button>
+          </div>
+        )}
       </div>
     </li>
   );
