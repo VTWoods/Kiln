@@ -420,9 +420,7 @@ export default function ShoppingListsPage() {
           </p>
           <p className="mt-1 text-sm text-stone-500">
             Create a list here, or open any recipe and click{" "}
-            <span className="font-medium text-stone-700">
-              + Add to Shopping List
-            </span>{" "}
+            <span className="font-medium text-stone-700">+ List</span>{" "}
             to start one automatically.
           </p>
           <div className="mt-4 flex justify-center gap-2">

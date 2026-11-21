@@ -181,9 +181,10 @@ export default function MealPlanPage() {
           type="button"
           onClick={() => setShowAddToListModal(true)}
           disabled={entries.length === 0}
+          title="Add week's meals to Shopping List"
           className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          + Add Week to Shopping List
+          + List
           {entries.length > 0 && (
             <span className="rounded-full bg-amber-700/80 px-2 py-0.5 text-xs">
               {entries.length}

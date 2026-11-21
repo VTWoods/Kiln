@@ -312,16 +312,18 @@ export default function RecipesPage() {
                     <button
                       type="button"
                       onClick={() => setRecipeForPlan(recipe)}
+                      title="Add to Meal Plan"
                       className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
                     >
-                      + Meal Plan
+                      + Plan
                     </button>
                     <button
                       type="button"
                       onClick={() => setRecipeForList(recipe)}
+                      title="Add to Shopping List"
                       className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
                     >
-                      + Shopping List
+                      + List
                     </button>
                   </div>
                 </div>

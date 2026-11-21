@@ -65,7 +65,7 @@ export default function App() {
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     [
-      "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+      "whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
       isActive
         ? "bg-amber-100 text-amber-900"
         : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
@@ -73,37 +73,32 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-4 sm:gap-6">
-            <span className="text-lg font-semibold tracking-tight text-stone-900">
-              Kiln
-            </span>
+      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 shadow-2xs backdrop-blur-xs">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-5">
+            <KilnBrandSyncButton status={offlineStatus} />
             <nav className="flex items-center gap-1">
               <NavLink to="/recipes" className={navLinkClass}>
-                Recipes
+                Recipe
               </NavLink>
               <NavLink to="/meal-plan" className={navLinkClass}>
-                Meal Plan
+                Plan
               </NavLink>
               <NavLink to="/shopping-lists" className={navLinkClass}>
-                Shopping Lists
+                List
               </NavLink>
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
-            {installPrompt && (
-              <button
-                type="button"
-                onClick={handleInstallApp}
-                className="inline-flex items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1 text-xs font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
-              >
-                Install App
-              </button>
-            )}
-            <OfflineSyncBadge status={offlineStatus} />
-          </div>
+          {installPrompt && (
+            <button
+              type="button"
+              onClick={handleInstallApp}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1 text-xs font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
+            >
+              Install
+            </button>
+          )}
         </div>
       </header>
 
@@ -121,7 +116,7 @@ export default function App() {
   );
 }
 
-function OfflineSyncBadge({ status }: { status: OfflineStatus }) {
+function KilnBrandSyncButton({ status }: { status: OfflineStatus }) {
   const lastSyncLabel = status.lastSyncedAt
     ? `Last synced ${new Date(status.lastSyncedAt).toLocaleTimeString([], {
         hour: "numeric",
@@ -129,51 +124,45 @@ function OfflineSyncBadge({ status }: { status: OfflineStatus }) {
       })}`
     : "Not synced yet";
 
-  if (status.syncing) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-        <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-600" />
-        Syncing…
-      </span>
-    );
-  }
-
-  if (!status.online) {
-    return (
-      <span
-        className="inline-flex items-center gap-1.5 rounded-full bg-stone-200/80 px-2.5 py-1 text-xs font-medium text-stone-700"
-        title={`Working offline (${lastSyncLabel}). Changes will sync automatically when reconnected.`}
-      >
-        <span className="h-2 w-2 rounded-full bg-amber-500" />
-        Offline
-        {status.pendingCount > 0 ? ` · ${status.pendingCount} pending` : ""}
-      </span>
-    );
-  }
-
-  if (status.pendingCount > 0) {
-    return (
-      <button
-        type="button"
-        onClick={() => void syncAllForOffline()}
-        title={status.syncError || "Click to sync pending offline changes now"}
-        className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
-      >
-        <span className="h-2 w-2 rounded-full bg-amber-600" />
-        Sync {status.pendingCount} change{status.pendingCount === 1 ? "" : "s"}
-      </button>
-    );
-  }
+  const title = status.syncing
+    ? "Syncing offline cache…"
+    : !status.online
+      ? `Offline (${lastSyncLabel}). Changes will sync automatically when reconnected.`
+      : status.pendingCount > 0
+        ? status.syncError ||
+          `${status.pendingCount} pending change${status.pendingCount === 1 ? "" : "s"} · Click to sync now`
+        : `Synced · ${lastSyncLabel} · Click to refresh offline cache`;
 
   return (
     <button
       type="button"
-      onClick={() => void syncAllForOffline()}
-      title={`${lastSyncLabel} · Click to refresh offline cache`}
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
+      onClick={() => {
+        if (status.online && !status.syncing) {
+          void syncAllForOffline();
+        }
+      }}
+      title={title}
+      aria-label={`Kiln (${title})`}
+      className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-stone-100"
     >
-      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-      Synced
+      <span className="text-lg font-semibold tracking-tight text-stone-900">
+        Kiln
+      </span>
+      {status.syncing ? (
+        <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-600" />
+      ) : !status.online ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-stone-200/80 px-2 py-0.5 text-[11px] font-medium text-stone-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          Offline{status.pendingCount > 0 ? ` (${status.pendingCount})` : ""}
+        </span>
+      ) : status.pendingCount > 0 ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-900">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+          {status.pendingCount}
+        </span>
+      ) : (
+        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+      )}
     </button>
   );
 }

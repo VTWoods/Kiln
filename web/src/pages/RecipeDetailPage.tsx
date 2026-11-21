@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { deleteRecipe, getRecipe } from "../api/recipes";
 import AddToMealPlanModal from "../components/AddToMealPlanModal";
@@ -23,6 +23,8 @@ export default function RecipeDetailPage() {
   const [showAddToListModal, setShowAddToListModal] = useState(false);
   const [showAddToPlanModal, setShowAddToPlanModal] = useState(false);
   const [showCastModal, setShowCastModal] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const [addedNotice, setAddedNotice] = useState<{
     listId: number;
     listName: string;
@@ -65,6 +67,27 @@ export default function RecipeDetailPage() {
       active = false;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowMoreMenu(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowMoreMenu(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showMoreMenu]);
 
   const handleDelete = async () => {
     if (!recipe) return;
@@ -115,60 +138,81 @@ export default function RecipeDetailPage() {
 
   return (
     <article className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-2">
         <Link
           to="/recipes"
-          className="inline-flex items-center text-sm font-medium text-stone-600 hover:text-stone-900"
+          aria-label="Back to Recipes"
+          title="Back to Recipes"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-base font-medium text-stone-600 transition-colors hover:bg-stone-50 hover:text-stone-900"
         >
-          ← Back to Recipes
+          ←
         </Link>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setShowAddToPlanModal(true)}
+            title="Add to Meal Plan"
             className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
           >
-            + Add to Meal Plan
+            + Plan
           </button>
           <button
             type="button"
             onClick={() => setShowAddToListModal(true)}
+            title="Add to Shopping List"
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
           >
-            + Add to Shopping List
+            + List
           </button>
           <button
             type="button"
             onClick={() => setShowCastModal(true)}
+            title="Cast to Nest Hub"
             className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
           >
-            Cast to Nest Hub
+            Cast
           </button>
-          <Link
-            to={`/recipes/${recipe.id}/cook`}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-          >
-            Cook Mode
-          </Link>
-          {hasSourceUrl && (
-            <a
-              href={recipe.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowMoreMenu((prev) => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={showMoreMenu}
+              aria-label="More recipe actions"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-stone-300 bg-white text-base font-semibold text-stone-600 hover:bg-stone-50 hover:text-stone-900"
             >
-              Original Recipe ↗
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={deleting}
-            className="rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-          >
-            {deleting ? "Deleting…" : "Delete"}
-          </button>
+              ⋮
+            </button>
+
+            {showMoreMenu && (
+              <div
+                role="menu"
+                className="absolute right-0 z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-stone-200 bg-white py-1 shadow-lg"
+              >
+                <Link
+                  to={`/recipes/${recipe.id}/cook`}
+                  role="menuitem"
+                  onClick={() => setShowMoreMenu(false)}
+                  className="block px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 hover:text-stone-900"
+                >
+                  Cook Mode
+                </Link>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={deleting}
+                  onClick={() => {
+                    setShowMoreMenu(false);
+                    void handleDelete();
+                  }}
+                  className="block w-full px-3.5 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
