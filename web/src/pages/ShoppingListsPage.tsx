@@ -115,6 +115,17 @@ export default function ShoppingListsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reload active list automatically after offline outbox changes sync back to server
+  useEffect(() => {
+    const onSynced = () => {
+      if (activeList?.id) {
+        void loadActiveList(activeList.id);
+      }
+    };
+    window.addEventListener("kiln:synced", onSynced);
+    return () => window.removeEventListener("kiln:synced", onSynced);
+  }, [activeList?.id, loadActiveList]);
+
   const handleSelectList = (id: number) => {
     setSearchParams({ list: String(id) });
     void loadActiveList(id);

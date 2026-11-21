@@ -1,3 +1,9 @@
+import {
+  getCachedPantryStaples,
+  isOfflineError,
+  saveCachedPantryStaples,
+} from "../offline/store";
+
 export type PantryStaple = {
   id: number;
   name: string;
@@ -31,8 +37,17 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export async function listPantryStaples(): Promise<PantryStaple[]> {
-  const res = await fetch("/api/pantry-staples");
-  return parseJsonOrThrow<PantryStaple[]>(res);
+  try {
+    const res = await fetch("/api/pantry-staples");
+    const staples = await parseJsonOrThrow<PantryStaple[]>(res);
+    void saveCachedPantryStaples(staples);
+    return staples;
+  } catch (err) {
+    if (isOfflineError(err)) {
+      return getCachedPantryStaples();
+    }
+    throw err;
+  }
 }
 
 export async function addPantryStaple(name: string): Promise<PantryStaple> {

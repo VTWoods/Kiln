@@ -1,3 +1,13 @@
+import {
+  deleteCachedRecipe,
+  getCachedRecipe,
+  getCachedRecipes,
+  isOfflineError,
+  OfflineNetworkError,
+  saveCachedRecipe,
+  saveCachedRecipesSummary,
+} from "../offline/store";
+import { markApiOffline, markApiReachable } from "../offline/sync";
 import type {
   ImportedRecipe,
   Recipe,
@@ -11,6 +21,33 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.blocked = blocked;
   }
+}
+
+async function fetchOrOffline(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    markApiOffline();
+    throw new OfflineNetworkError();
+  }
+  let res: Response;
+  try {
+    res = await fetch(input, init);
+  } catch (err) {
+    markApiOffline();
+    throw err;
+  }
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    // 502 on import-preview is a real remote-fetch error, not Kiln being unreachable
+    const urlStr = typeof input === "string" ? input : input.toString();
+    if (!urlStr.includes("/import-preview")) {
+      markApiOffline();
+      throw new OfflineNetworkError(`Kiln server unavailable (HTTP ${res.status})`);
+    }
+  }
+  markApiReachable();
+  return res;
 }
 
 async function parseJsonOrThrow<T>(res: Response): Promise<T> {
@@ -45,13 +82,33 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export async function listRecipes(): Promise<Recipe[]> {
-  const res = await fetch("/api/recipes");
-  return parseJsonOrThrow<Recipe[]>(res);
+  try {
+    const res = await fetchOrOffline("/api/recipes");
+    const recipes = await parseJsonOrThrow<Recipe[]>(res);
+    void saveCachedRecipesSummary(recipes);
+    return recipes;
+  } catch (err) {
+    if (isOfflineError(err)) {
+      return getCachedRecipes();
+    }
+    throw err;
+  }
 }
 
 export async function getRecipe(id: number): Promise<Recipe> {
-  const res = await fetch(`/api/recipes/${id}`);
-  return parseJsonOrThrow<Recipe>(res);
+  try {
+    const res = await fetchOrOffline(`/api/recipes/${id}`);
+    const recipe = await parseJsonOrThrow<Recipe>(res);
+    void saveCachedRecipe(recipe);
+    return recipe;
+  } catch (err) {
+    if (isOfflineError(err)) {
+      const cached = await getCachedRecipe(id);
+      if (cached) return cached;
+      throw new Error("This recipe has not been synced for offline viewing yet.");
+    }
+    throw err;
+  }
 }
 
 export async function importRecipePreview(
@@ -62,35 +119,49 @@ export async function importRecipePreview(
   if (html && html.trim()) {
     body.html = html;
   }
-  const res = await fetch("/api/recipes/import-preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return parseJsonOrThrow<ImportedRecipe>(res);
+  try {
+    const res = await fetchOrOffline("/api/recipes/import-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return parseJsonOrThrow<ImportedRecipe>(res);
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new Error(
+        "Importing recipes requires a connection to your Kiln server.",
+      );
+    }
+    throw err;
+  }
 }
 
 export async function getImportDraft(token: string): Promise<ImportedRecipe> {
-  const res = await fetch(`/api/recipes/import-draft/${encodeURIComponent(token)}`);
+  const res = await fetchOrOffline(
+    `/api/recipes/import-draft/${encodeURIComponent(token)}`,
+  );
   return parseJsonOrThrow<ImportedRecipe>(res);
 }
 
 export async function createRecipe(
   payload: SaveRecipePayload,
 ): Promise<Recipe> {
-  const res = await fetch("/api/recipes", {
+  const res = await fetchOrOffline("/api/recipes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return parseJsonOrThrow<Recipe>(res);
+  const created = await parseJsonOrThrow<Recipe>(res);
+  void saveCachedRecipe(created);
+  return created;
 }
 
 export async function deleteRecipe(id: number): Promise<void> {
-  const res = await fetch(`/api/recipes/${id}`, {
+  const res = await fetchOrOffline(`/api/recipes/${id}`, {
     method: "DELETE",
   });
   if (!res.ok) {
     await parseJsonOrThrow<never>(res);
   }
+  void deleteCachedRecipe(id);
 }

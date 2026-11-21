@@ -12,6 +12,7 @@ __pycache__/
 # Frontend dependencies & build output
 web/node_modules/
 web/dist/
+web/dev-dist/
 
 # Environment & editor files
 .env

@@ -1,51 +1,58 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useMatch } from "react-router-dom";
+import {
+  initOfflineSync,
+  syncAllForOffline,
+  useOfflineStatus,
+  type OfflineStatus,
+} from "./offline/sync";
 import CookModePage from "./pages/CookModePage";
 import RecipesPage from "./pages/RecipesPage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import ShoppingListsPage from "./pages/ShoppingListsPage";
 
-type HealthResponse = {
-  status: string;
-  service: string;
-  database: string;
-};
-
-type HealthState =
-  | { kind: "loading" }
-  | { kind: "ok"; data: HealthResponse }
-  | { kind: "error"; message: string };
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
 
 export default function App() {
   const isCookMode = Boolean(useMatch("/recipes/:id/cook"));
-  const [health, setHealth] = useState<HealthState>({ kind: "loading" });
+  const offlineStatus = useOfflineStatus();
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
-    if (isCookMode) return;
-    let active = true;
-    fetch("/api/health")
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        return (await res.json()) as HealthResponse;
-      })
-      .then((data) => {
-        if (active) setHealth({ kind: "ok", data });
-      })
-      .catch((err: unknown) => {
-        if (active) {
-          setHealth({
-            kind: "error",
-            message: err instanceof Error ? err.message : "Failed to reach API",
-          });
-        }
-      });
+    initOfflineSync();
+    if (navigator.onLine) {
+      void syncAllForOffline();
+    }
+  }, []);
 
-    return () => {
-      active = false;
+  useEffect(() => {
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
     };
-  }, [isCookMode]);
+    const onInstalled = () => {
+      setInstallPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") {
+      setInstallPrompt(null);
+    }
+  };
 
   if (isCookMode) {
     return (
@@ -66,8 +73,8 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-6">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-4 sm:gap-6">
             <span className="text-lg font-semibold tracking-tight text-stone-900">
               Kiln
             </span>
@@ -81,7 +88,18 @@ export default function App() {
             </nav>
           </div>
 
-          <HealthBadge health={health} />
+          <div className="flex items-center gap-2">
+            {installPrompt && (
+              <button
+                type="button"
+                onClick={handleInstallApp}
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1 text-xs font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
+              >
+                Install App
+              </button>
+            )}
+            <OfflineSyncBadge status={offlineStatus} />
+          </div>
         </div>
       </header>
 
@@ -98,32 +116,59 @@ export default function App() {
   );
 }
 
-function HealthBadge({ health }: { health: HealthState }) {
-  if (health.kind === "loading") {
+function OfflineSyncBadge({ status }: { status: OfflineStatus }) {
+  const lastSyncLabel = status.lastSyncedAt
+    ? `Last synced ${new Date(status.lastSyncedAt).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`
+    : "Not synced yet";
+
+  if (status.syncing) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-600">
-        <span className="h-2 w-2 rounded-full bg-stone-400" />
-        Checking API…
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+        <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-amber-300 border-t-amber-600" />
+        Syncing…
       </span>
     );
   }
 
-  if (health.kind === "error") {
+  if (!status.online) {
     return (
       <span
-        className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700"
-        title={health.message}
+        className="inline-flex items-center gap-1.5 rounded-full bg-stone-200/80 px-2.5 py-1 text-xs font-medium text-stone-700"
+        title={`Working offline (${lastSyncLabel}). Changes will sync automatically when reconnected.`}
       >
-        <span className="h-2 w-2 rounded-full bg-red-500" />
-        API offline
+        <span className="h-2 w-2 rounded-full bg-amber-500" />
+        Offline
+        {status.pendingCount > 0 ? ` · ${status.pendingCount} pending` : ""}
       </span>
+    );
+  }
+
+  if (status.pendingCount > 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => void syncAllForOffline()}
+        title={status.syncError || "Click to sync pending offline changes now"}
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+      >
+        <span className="h-2 w-2 rounded-full bg-amber-600" />
+        Sync {status.pendingCount} change{status.pendingCount === 1 ? "" : "s"}
+      </button>
     );
   }
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+    <button
+      type="button"
+      onClick={() => void syncAllForOffline()}
+      title={`${lastSyncLabel} · Click to refresh offline cache`}
+      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
+    >
       <span className="h-2 w-2 rounded-full bg-emerald-500" />
-      API &amp; SQLite {health.data.database}
-    </span>
+      Synced
+    </button>
   );
 }
