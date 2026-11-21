@@ -137,7 +137,7 @@ function KilnBrandSyncButton({ status }: { status: OfflineStatus }) {
     <button
       type="button"
       onClick={() => {
-        if (status.online && !status.syncing) {
+        if (!status.syncing) {
           void syncAllForOffline();
         }
       }}

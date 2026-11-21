@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ManagePantryStaplesModal from "../components/ManagePantryStaplesModal";
 import {
+  getCachedShoppingList,
+  getCachedShoppingLists,
+} from "../offline/store";
+import {
   addShoppingListItems,
   clearCheckedShoppingListItems,
   createShoppingList,
@@ -50,8 +54,14 @@ export default function ShoppingListsPage() {
   const initialListId = Number(searchParams.get("list") || 0);
 
   const loadActiveList = useCallback(async (id: number) => {
-    setLoadingDetail(true);
     setError(null);
+    const cached = await getCachedShoppingList(id);
+    if (cached && cached.items) {
+      setActiveList(cached);
+      setLoadingDetail(false);
+    } else {
+      setLoadingDetail(true);
+    }
     try {
       const detail = await getShoppingList(id);
       setActiveList(detail);
@@ -67,9 +77,11 @@ export default function ShoppingListsPage() {
         ),
       );
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load shopping list.",
-      );
+      if (!cached) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load shopping list.",
+        );
+      }
     } finally {
       setLoadingDetail(false);
     }
@@ -77,8 +89,22 @@ export default function ShoppingListsPage() {
 
   useEffect(() => {
     let active = true;
-    setLoadingLists(true);
     setError(null);
+
+    // Hydrate immediately from IndexedDB so switching tabs offline renders instantly
+    let hydrated = false;
+    void getCachedShoppingLists().then((cachedLists) => {
+      if (!active || cachedLists.length === 0) return;
+      hydrated = true;
+      setLists(cachedLists);
+      setLoadingLists(false);
+      const preferred =
+        cachedLists.find((l) => l.id === initialListId) ?? cachedLists[0];
+      if (preferred.items) {
+        setActiveList(preferred);
+        setLoadingDetail(false);
+      }
+    });
 
     listShoppingLists()
       .then((data) => {
@@ -96,7 +122,7 @@ export default function ShoppingListsPage() {
         void loadActiveList(preferred.id);
       })
       .catch((err: unknown) => {
-        if (active) {
+        if (active && !hydrated) {
           setError(
             err instanceof Error
               ? err.message

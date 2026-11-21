@@ -4,6 +4,7 @@ import { getImportDraft, listRecipes } from "../api/recipes";
 import AddToMealPlanModal from "../components/AddToMealPlanModal";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import ImportRecipeModal from "../components/ImportRecipeModal";
+import { getCachedRecipes } from "../offline/store";
 import { formatDayLabel } from "../types/mealPlan";
 import {
   formatHostname,
@@ -55,21 +56,36 @@ export default function RecipesPage() {
     recipeTitle: string;
   } | null>(null);
 
-  const loadRecipes = () => {
-    setLoading(true);
-    setError(null);
-    listRecipes()
-      .then((data) => setRecipes(data))
-      .catch((err: unknown) =>
-        setError(
-          err instanceof Error ? err.message : "Failed to load recipes.",
-        ),
-      )
-      .finally(() => setLoading(false));
-  };
-
   useEffect(() => {
-    loadRecipes();
+    let active = true;
+    setError(null);
+
+    // Hydrate immediately from IndexedDB so switching tabs offline never flashes empty
+    void getCachedRecipes().then((cached) => {
+      if (active && cached.length > 0) {
+        setRecipes(cached);
+        setLoading(false);
+      }
+    });
+
+    listRecipes()
+      .then((data) => {
+        if (active) setRecipes(data);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(
+            err instanceof Error ? err.message : "Failed to load recipes.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {

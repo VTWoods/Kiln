@@ -4,6 +4,7 @@ import { deleteRecipe, getRecipe } from "../api/recipes";
 import AddToMealPlanModal from "../components/AddToMealPlanModal";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import CastRecipeModal from "../components/CastRecipeModal";
+import { getCachedRecipe } from "../offline/store";
 import { formatDayLabel } from "../types/mealPlan";
 import {
   formatHostname,
@@ -45,15 +46,26 @@ export default function RecipeDetailPage() {
     }
 
     let active = true;
-    setLoading(true);
     setError(null);
+
+    // Hydrate immediately from IndexedDB if available
+    let hydrated = false;
+    void getCachedRecipe(numericId).then((cached) => {
+      if (active && cached) {
+        hydrated = true;
+        setRecipe(cached);
+        setLoading(false);
+      } else if (active && !hydrated) {
+        setLoading(true);
+      }
+    });
 
     getRecipe(numericId)
       .then((data) => {
         if (active) setRecipe(data);
       })
       .catch((err: unknown) => {
-        if (active) {
+        if (active && !hydrated) {
           setError(
             err instanceof Error ? err.message : "Failed to load recipe.",
           );

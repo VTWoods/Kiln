@@ -99,6 +99,18 @@ function getDb(): Promise<IDBPDatabase<KilnOfflineDB>> {
           db.createObjectStore("meta", { keyPath: "key" });
         }
       },
+      blocking(_currentVersion, _blockedVersion, event) {
+        // Close stale connection so a newer version upgrade never deadlocks
+        const target = event.target as IDBDatabase | null;
+        target?.close();
+        dbPromise = null;
+      },
+      terminated() {
+        dbPromise = null;
+      },
+    }).catch((err) => {
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;
@@ -116,6 +128,13 @@ export function isOfflineError(err: unknown): boolean {
   if (typeof navigator !== "undefined" && !navigator.onLine) return true;
   // Standard browser fetch() network failure throws TypeError
   if (err instanceof TypeError) return true;
+  // Fetch timeout via AbortController throws DOMException with name AbortError/TimeoutError
+  if (
+    err instanceof Error &&
+    (err.name === "AbortError" || err.name === "TimeoutError")
+  ) {
+    return true;
+  }
   return false;
 }
 

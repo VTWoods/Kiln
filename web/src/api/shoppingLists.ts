@@ -1,17 +1,16 @@
+import { apiFetch } from "../offline/fetch";
 import {
   deleteCachedShoppingList,
   enqueueOutboxOp,
   getCachedShoppingList,
   getCachedShoppingLists,
   isOfflineError,
-  OfflineNetworkError,
   saveCachedShoppingList,
   saveCachedShoppingListsSummary,
 } from "../offline/store";
 import {
   flushOutbox,
-  markApiOffline,
-  markApiReachable,
+  isOfflineCircuitOpen,
   refreshPendingCount,
 } from "../offline/sync";
 import {
@@ -20,29 +19,6 @@ import {
   type ShoppingList,
   type ShoppingListItem,
 } from "../types/shoppingList";
-
-async function fetchOrOffline(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    markApiOffline();
-    throw new OfflineNetworkError();
-  }
-  let res: Response;
-  try {
-    res = await fetch(input, init);
-  } catch (err) {
-    markApiOffline();
-    throw err;
-  }
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    markApiOffline();
-    throw new OfflineNetworkError(`Kiln server unavailable (HTTP ${res.status})`);
-  }
-  markApiReachable();
-  return res;
-}
 
 async function parseJsonOrThrow<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -71,8 +47,10 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 
 export async function listShoppingLists(): Promise<ShoppingList[]> {
   try {
-    await flushOutbox();
-    const res = await fetchOrOffline("/api/shopping-lists");
+    if (!isOfflineCircuitOpen()) {
+      await flushOutbox();
+    }
+    const res = await apiFetch("/api/shopping-lists");
     const lists = await parseJsonOrThrow<ShoppingList[]>(res);
     void saveCachedShoppingListsSummary(lists);
     return lists;
@@ -86,8 +64,10 @@ export async function listShoppingLists(): Promise<ShoppingList[]> {
 
 export async function getShoppingList(id: number): Promise<ShoppingList> {
   try {
-    await flushOutbox();
-    const res = await fetchOrOffline(`/api/shopping-lists/${id}`);
+    if (!isOfflineCircuitOpen()) {
+      await flushOutbox();
+    }
+    const res = await apiFetch(`/api/shopping-lists/${id}`);
     const list = await parseJsonOrThrow<ShoppingList>(res);
     void saveCachedShoppingList(list);
     return list;
@@ -105,7 +85,7 @@ export async function getShoppingList(id: number): Promise<ShoppingList> {
 
 export async function createShoppingList(name: string): Promise<ShoppingList> {
   try {
-    const res = await fetchOrOffline("/api/shopping-lists", {
+    const res = await apiFetch("/api/shopping-lists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -125,7 +105,7 @@ export async function createShoppingList(name: string): Promise<ShoppingList> {
 
 export async function deleteShoppingList(id: number): Promise<void> {
   try {
-    const res = await fetchOrOffline(`/api/shopping-lists/${id}`, {
+    const res = await apiFetch(`/api/shopping-lists/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) {
@@ -147,7 +127,7 @@ export async function addShoppingListItems(
   items: AddShoppingListItemInput[],
 ): Promise<ShoppingList> {
   try {
-    const res = await fetchOrOffline(`/api/shopping-lists/${listId}/items`, {
+    const res = await apiFetch(`/api/shopping-lists/${listId}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items }),
@@ -208,7 +188,7 @@ export async function updateShoppingListItem(
   >,
 ): Promise<ShoppingListItem> {
   try {
-    const res = await fetchOrOffline(
+    const res = await apiFetch(
       `/api/shopping-lists/${listId}/items/${itemId}`,
       {
         method: "PATCH",
@@ -269,7 +249,7 @@ export async function deleteShoppingListItem(
   itemId: number,
 ): Promise<void> {
   try {
-    const res = await fetchOrOffline(
+    const res = await apiFetch(
       `/api/shopping-lists/${listId}/items/${itemId}`,
       {
         method: "DELETE",
@@ -316,7 +296,7 @@ export async function clearCheckedShoppingListItems(
   listId: number,
 ): Promise<ShoppingList> {
   try {
-    const res = await fetchOrOffline(`/api/shopping-lists/${listId}/checked`, {
+    const res = await apiFetch(`/api/shopping-lists/${listId}/checked`, {
       method: "DELETE",
     });
     const updated = await parseJsonOrThrow<ShoppingList>(res);

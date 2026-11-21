@@ -1,3 +1,4 @@
+import { apiFetch } from "../offline/fetch";
 import {
   getCachedPantryStaples,
   isOfflineError,
@@ -38,7 +39,7 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 
 export async function listPantryStaples(): Promise<PantryStaple[]> {
   try {
-    const res = await fetch("/api/pantry-staples");
+    const res = await apiFetch("/api/pantry-staples");
     const staples = await parseJsonOrThrow<PantryStaple[]>(res);
     void saveCachedPantryStaples(staples);
     return staples;

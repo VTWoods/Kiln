@@ -9,6 +9,10 @@ import {
 import { listRecipes } from "../api/recipes";
 import AddMealPlanToShoppingListModal from "../components/AddMealPlanToShoppingListModal";
 import {
+  getCachedMealPlanWeek,
+  saveCachedMealPlanWeek,
+} from "../offline/store";
+import {
   formatDateISO,
   formatDayLabel,
   formatWeekRange,
@@ -54,15 +58,23 @@ export default function MealPlanPage() {
   } | null>(null);
 
   const loadWeek = useCallback(async (mondayISO: string) => {
-    setLoading(true);
     setError(null);
+    const cached = await getCachedMealPlanWeek(mondayISO);
+    if (cached) {
+      setEntries(cached.entries);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const data = await getMealPlanWeek(mondayISO);
       setEntries(data.entries);
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load meal plan.",
-      );
+      if (!cached) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load meal plan.",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -138,9 +150,16 @@ export default function MealPlanPage() {
 
   const handleDeleteEntry = async (entry: MealPlanEntry) => {
     setError(null);
-    setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+    const remaining = entries.filter((e) => e.id !== entry.id);
+    setEntries(remaining);
     try {
       await deleteMealPlanEntry(entry.id);
+      const dates = getWeekDates(weekStart);
+      void saveCachedMealPlanWeek({
+        week_start: dates[0],
+        week_end: dates[6],
+        entries: remaining,
+      });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to remove meal.");
       void loadWeek(weekStart);

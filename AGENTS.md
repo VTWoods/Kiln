@@ -54,7 +54,7 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 │   └── src/
 │       ├── App.tsx          # Sticky top nav (Kiln+sync, Recipe, Plan, List) & routes
 │       ├── api/             # Offline-first API clients (recipes, shoppingLists, pantryStaples, mealPlan, cast)
-│       ├── offline/         # IndexedDB store (store.ts) & outbox sync engine (sync.ts)
+│       ├── offline/         # IndexedDB store (store.ts), timeout/circuit-breaker fetch (fetch.ts), & outbox sync (sync.ts)
 │       ├── pages/           # RecipesPage, RecipeDetailPage, MealPlanPage, ShoppingListsPage, CookModePage
 │       ├── components/      # ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
 │       │                    # AddMealPlanToShoppingListModal, ManagePantryStaplesModal, CastRecipeModal
@@ -82,19 +82,24 @@ make migrate
 # Build React + Workbox PWA production bundle into web/dist
 npm --prefix web run build
 
-# Run Django (:8091) + Vite (:8090) together behind Caddy HTTPS
-PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev
+# Run Django (:8091) and Vite (:8090) as TWO SEPARATE background daemon tasks (preferred for AI agents)
+# Task 1 (Django backend on 0.0.0.0:8091):
+PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev-api
 
-# Or run individually:
-PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev-api   # Django on 0.0.0.0:8091
-VITE_HMR_CLIENT_PORT=443 make dev-web                       # Vite on 0.0.0.0:8090
+# Task 2 (Vite frontend on 0.0.0.0:8090, HMR over wss:// behind Caddy):
+VITE_HMR_CLIENT_PORT=443 make dev-web
+
+# (For manual single-terminal dev, you can also run both together:)
+PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev
 
 # Normalize legacy recipe ingredients (and optionally re-merge shopping lists)
 ./.venv/bin/python3 manage.py normalize_recipes --dry-run
 ./.venv/bin/python3 manage.py normalize_recipes --remerge-shopping-lists
 ```
 
-**Runtime ports & data:**
+**Starting dev servers as an AI agent:**
+- Always launch `dev-api` and `dev-web` as **two separate background daemon tasks** (`IsDaemon: true`, outside the sandbox so host Caddy on `localhost:8090`/`8091` can reach them and Django can fetch recipe URLs / cast on LAN).
+- Keeping them as separate tasks gives independent logs and lets you inspect or restart Django without interrupting Vite (and vice versa).
 - Dev backend runs on `:8091` and Vite dev server on `:8090` (ports `8080`/`8081` may already be in use on the host).
 - Production/local user data lives in `./data/kiln.db` and `./data/images/` (both gitignored — **never delete or wipe `./data/kiln.db`**).
 

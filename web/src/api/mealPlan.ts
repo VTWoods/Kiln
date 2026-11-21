@@ -1,38 +1,17 @@
+import { apiFetch } from "../offline/fetch";
 import {
   getCachedMealPlanWeek,
   isOfflineError,
-  OfflineNetworkError,
   saveCachedMealPlanWeek,
 } from "../offline/store";
-import { markApiOffline, markApiReachable } from "../offline/sync";
-import type {
-  MealPlanEntry,
-  MealPlanIngredientsResponse,
-  MealPlanWeek,
+import {
+  formatDateISO,
+  getMondayOfWeek,
+  parseDateISO,
+  type MealPlanEntry,
+  type MealPlanIngredientsResponse,
+  type MealPlanWeek,
 } from "../types/mealPlan";
-
-async function fetchOrOffline(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    markApiOffline();
-    throw new OfflineNetworkError();
-  }
-  let res: Response;
-  try {
-    res = await fetch(input, init);
-  } catch (err) {
-    markApiOffline();
-    throw err;
-  }
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    markApiOffline();
-    throw new OfflineNetworkError(`Kiln server unavailable (HTTP ${res.status})`);
-  }
-  markApiReachable();
-  return res;
-}
 
 async function parseJsonOrThrow<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -64,7 +43,7 @@ export async function getMealPlanWeek(
 ): Promise<MealPlanWeek> {
   const qs = weekStart ? `?week_start=${encodeURIComponent(weekStart)}` : "";
   try {
-    const res = await fetchOrOffline(`/api/meal-plan${qs}`);
+    const res = await apiFetch(`/api/meal-plan${qs}`);
     const data = await parseJsonOrThrow<MealPlanWeek>(res);
     void saveCachedMealPlanWeek(data);
     return data;
@@ -84,12 +63,21 @@ export async function addMealPlanEntry(
   notes = "",
 ): Promise<MealPlanEntry> {
   try {
-    const res = await fetchOrOffline("/api/meal-plan/entries", {
+    const res = await apiFetch("/api/meal-plan/entries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ recipe_id: recipeId, date, notes }),
     });
-    return parseJsonOrThrow<MealPlanEntry>(res);
+    const created = await parseJsonOrThrow<MealPlanEntry>(res);
+    const weekStart = formatDateISO(getMondayOfWeek(parseDateISO(created.date)));
+    const cached = await getCachedMealPlanWeek(weekStart);
+    if (cached) {
+      void saveCachedMealPlanWeek({
+        ...cached,
+        entries: [...cached.entries, created],
+      });
+    }
+    return created;
   } catch (err) {
     if (isOfflineError(err)) {
       throw new Error(
@@ -105,12 +93,24 @@ export async function updateMealPlanEntry(
   patch: { date?: string; notes?: string },
 ): Promise<MealPlanEntry> {
   try {
-    const res = await fetchOrOffline(`/api/meal-plan/entries/${entryId}`, {
+    const res = await apiFetch(`/api/meal-plan/entries/${entryId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
-    return parseJsonOrThrow<MealPlanEntry>(res);
+    const updated = await parseJsonOrThrow<MealPlanEntry>(res);
+    const weekStart = formatDateISO(getMondayOfWeek(parseDateISO(updated.date)));
+    const cached = await getCachedMealPlanWeek(weekStart);
+    if (cached) {
+      const exists = cached.entries.some((e) => e.id === updated.id);
+      void saveCachedMealPlanWeek({
+        ...cached,
+        entries: exists
+          ? cached.entries.map((e) => (e.id === updated.id ? updated : e))
+          : [...cached.entries, updated],
+      });
+    }
+    return updated;
   } catch (err) {
     if (isOfflineError(err)) {
       throw new Error(
@@ -123,7 +123,7 @@ export async function updateMealPlanEntry(
 
 export async function deleteMealPlanEntry(entryId: number): Promise<void> {
   try {
-    const res = await fetchOrOffline(`/api/meal-plan/entries/${entryId}`, {
+    const res = await apiFetch(`/api/meal-plan/entries/${entryId}`, {
       method: "DELETE",
     });
     if (!res.ok) {
@@ -143,6 +143,6 @@ export async function getMealPlanIngredients(
   dates: string[],
 ): Promise<MealPlanIngredientsResponse> {
   const qs = `?dates=${encodeURIComponent(dates.join(","))}`;
-  const res = await fetchOrOffline(`/api/meal-plan/ingredients${qs}`);
+  const res = await apiFetch(`/api/meal-plan/ingredients${qs}`);
   return parseJsonOrThrow<MealPlanIngredientsResponse>(res);
 }

@@ -39,6 +39,9 @@ let status: OfflineStatus = {
   syncError: null,
 };
 
+const CIRCUIT_BREAKER_COOLDOWN_MS = 15_000;
+let lastOfflineAt = 0;
+
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -67,13 +70,20 @@ export function useOfflineStatus(): OfflineStatus {
   return useSyncExternalStore(subscribeOfflineStatus, getOfflineStatus);
 }
 
+export function isOfflineCircuitOpen(): boolean {
+  if (status.online) return false;
+  return Date.now() - lastOfflineAt < CIRCUIT_BREAKER_COOLDOWN_MS;
+}
+
 export function markApiReachable() {
+  lastOfflineAt = 0;
   if (!status.online) {
     updateStatus({ online: true, syncError: null });
   }
 }
 
 export function markApiOffline() {
+  lastOfflineAt = Date.now();
   if (status.online) {
     updateStatus({ online: false });
   }
@@ -85,6 +95,20 @@ export async function refreshPendingCount(): Promise<number> {
     updateStatus({ pendingCount: count });
   }
   return count;
+}
+
+async function syncFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs = 3500,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 let activeFlush: Promise<boolean> | null = null;
@@ -116,7 +140,7 @@ export function flushOutbox(): Promise<boolean> {
         if (op.seq === undefined) continue;
 
         if (op.kind === "add_items") {
-          const res = await fetch(`/api/shopping-lists/${op.listId}/items`, {
+          const res = await syncFetch(`/api/shopping-lists/${op.listId}/items`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items: op.items }),
@@ -149,7 +173,7 @@ export function flushOutbox(): Promise<boolean> {
             await deleteOutboxOp(op.seq);
             continue;
           }
-          const res = await fetch(
+          const res = await syncFetch(
             `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
             {
               method: "PATCH",
@@ -169,7 +193,7 @@ export function flushOutbox(): Promise<boolean> {
             await deleteOutboxOp(op.seq);
             continue;
           }
-          const res = await fetch(
+          const res = await syncFetch(
             `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
             { method: "DELETE" },
           );
@@ -179,7 +203,7 @@ export function flushOutbox(): Promise<boolean> {
           await deleteOutboxOp(op.seq);
           flushedAny = true;
         } else if (op.kind === "clear_checked") {
-          const res = await fetch(`/api/shopping-lists/${op.listId}/checked`, {
+          const res = await syncFetch(`/api/shopping-lists/${op.listId}/checked`, {
             method: "DELETE",
           });
           if (res.status >= 500) {
@@ -264,7 +288,7 @@ export function syncAllForOffline(): Promise<boolean> {
       if (!flushed) return false;
 
       // 1. Recipes summary + full detail for every recipe (so Cook Mode works offline!)
-      const recipesRes = await fetch("/api/recipes");
+      const recipesRes = await syncFetch("/api/recipes");
       if (!recipesRes.ok) {
         throw new OfflineNetworkError(`HTTP ${recipesRes.status}`);
       }
@@ -276,7 +300,7 @@ export function syncAllForOffline(): Promise<boolean> {
         recipes.map(async (r) => {
           if (r.image_url) imageUrls.push(r.image_url);
           try {
-            const detailRes = await fetch(`/api/recipes/${r.id}`);
+            const detailRes = await syncFetch(`/api/recipes/${r.id}`);
             if (detailRes.ok) {
               const full = (await detailRes.json()) as Recipe;
               await saveCachedRecipe(full);
@@ -290,14 +314,14 @@ export function syncAllForOffline(): Promise<boolean> {
       void warmImageCache(imageUrls);
 
       // 2. Shopping lists summary + full items for every list
-      const listsRes = await fetch("/api/shopping-lists");
+      const listsRes = await syncFetch("/api/shopping-lists");
       if (listsRes.ok) {
         const lists = (await listsRes.json()) as ShoppingList[];
         await saveCachedShoppingListsSummary(lists);
         await Promise.all(
           lists.map(async (sl) => {
             try {
-              const detailRes = await fetch(`/api/shopping-lists/${sl.id}`);
+              const detailRes = await syncFetch(`/api/shopping-lists/${sl.id}`);
               if (detailRes.ok) {
                 const full = (await detailRes.json()) as ShoppingList;
                 await saveCachedShoppingList(full);
@@ -310,7 +334,7 @@ export function syncAllForOffline(): Promise<boolean> {
       }
 
       // 3. Pantry staples
-      const staplesRes = await fetch("/api/pantry-staples");
+      const staplesRes = await syncFetch("/api/pantry-staples");
       if (staplesRes.ok) {
         const staples = (await staplesRes.json()) as PantryStaple[];
         await saveCachedPantryStaples(staples);
@@ -320,7 +344,7 @@ export function syncAllForOffline(): Promise<boolean> {
       await Promise.all(
         [getThisWeekMonday(), getNextWeekMonday()].map(async (weekStart) => {
           try {
-            const mpRes = await fetch(
+            const mpRes = await syncFetch(
               `/api/meal-plan?week_start=${encodeURIComponent(weekStart)}`,
             );
             if (mpRes.ok) {
@@ -336,6 +360,7 @@ export function syncAllForOffline(): Promise<boolean> {
       const syncedIso = new Date().toISOString();
       await setLastSyncedAt(syncedIso);
       const pending = await countOutboxOps();
+      lastOfflineAt = 0;
       updateStatus({
         online: true,
         pendingCount: pending,
@@ -364,6 +389,24 @@ export function syncAllForOffline(): Promise<boolean> {
   return activeFullSync;
 }
 
+async function probeKilnHealth(): Promise<boolean> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    markApiOffline();
+    return false;
+  }
+  try {
+    const res = await syncFetch("/api/health", undefined, 2000);
+    if (res.ok) {
+      markApiReachable();
+      return true;
+    }
+  } catch {
+    // Still unreachable
+  }
+  markApiOffline();
+  return false;
+}
+
 let initialized = false;
 
 export function initOfflineSync(): void {
@@ -377,8 +420,10 @@ export function initOfflineSync(): void {
   );
 
   window.addEventListener("online", () => {
-    updateStatus({ online: true, syncError: null });
-    void syncAllForOffline();
+    lastOfflineAt = 0;
+    void probeKilnHealth().then((ok) => {
+      if (ok) void syncAllForOffline();
+    });
   });
 
   window.addEventListener("offline", () => {
@@ -387,7 +432,28 @@ export function initOfflineSync(): void {
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && navigator.onLine) {
-      void flushOutbox();
+      if (!status.online) {
+        void probeKilnHealth().then((ok) => {
+          if (ok) void syncAllForOffline();
+        });
+      } else {
+        void flushOutbox();
+      }
     }
   });
+
+  // When offline while on cellular (navigator.onLine is true), periodically probe
+  // so rejoining home Wi-Fi reconnects and syncs automatically without manual reload.
+  window.setInterval(() => {
+    if (
+      document.visibilityState === "visible" &&
+      navigator.onLine &&
+      !status.online &&
+      !status.syncing
+    ) {
+      void probeKilnHealth().then((ok) => {
+        if (ok) void syncAllForOffline();
+      });
+    }
+  }, CIRCUIT_BREAKER_COOLDOWN_MS);
 }

@@ -1,13 +1,12 @@
+import { apiFetch } from "../offline/fetch";
 import {
   deleteCachedRecipe,
   getCachedRecipe,
   getCachedRecipes,
   isOfflineError,
-  OfflineNetworkError,
   saveCachedRecipe,
   saveCachedRecipesSummary,
 } from "../offline/store";
-import { markApiOffline, markApiReachable } from "../offline/sync";
 import type {
   ImportedRecipe,
   Recipe,
@@ -21,33 +20,6 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.blocked = blocked;
   }
-}
-
-async function fetchOrOffline(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    markApiOffline();
-    throw new OfflineNetworkError();
-  }
-  let res: Response;
-  try {
-    res = await fetch(input, init);
-  } catch (err) {
-    markApiOffline();
-    throw err;
-  }
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    // 502 on import-preview is a real remote-fetch error, not Kiln being unreachable
-    const urlStr = typeof input === "string" ? input : input.toString();
-    if (!urlStr.includes("/import-preview")) {
-      markApiOffline();
-      throw new OfflineNetworkError(`Kiln server unavailable (HTTP ${res.status})`);
-    }
-  }
-  markApiReachable();
-  return res;
 }
 
 async function parseJsonOrThrow<T>(res: Response): Promise<T> {
@@ -83,7 +55,7 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 
 export async function listRecipes(): Promise<Recipe[]> {
   try {
-    const res = await fetchOrOffline("/api/recipes");
+    const res = await apiFetch("/api/recipes");
     const recipes = await parseJsonOrThrow<Recipe[]>(res);
     void saveCachedRecipesSummary(recipes);
     return recipes;
@@ -97,7 +69,7 @@ export async function listRecipes(): Promise<Recipe[]> {
 
 export async function getRecipe(id: number): Promise<Recipe> {
   try {
-    const res = await fetchOrOffline(`/api/recipes/${id}`);
+    const res = await apiFetch(`/api/recipes/${id}`);
     const recipe = await parseJsonOrThrow<Recipe>(res);
     void saveCachedRecipe(recipe);
     return recipe;
@@ -120,11 +92,15 @@ export async function importRecipePreview(
     body.html = html;
   }
   try {
-    const res = await fetchOrOffline("/api/recipes/import-preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const res = await apiFetch(
+      "/api/recipes/import-preview",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      { timeoutMs: 25_000, allow502AppError: true, bypassCircuitBreaker: true },
+    );
     return parseJsonOrThrow<ImportedRecipe>(res);
   } catch (err) {
     if (isOfflineError(err)) {
@@ -137,8 +113,10 @@ export async function importRecipePreview(
 }
 
 export async function getImportDraft(token: string): Promise<ImportedRecipe> {
-  const res = await fetchOrOffline(
+  const res = await apiFetch(
     `/api/recipes/import-draft/${encodeURIComponent(token)}`,
+    undefined,
+    { bypassCircuitBreaker: true },
   );
   return parseJsonOrThrow<ImportedRecipe>(res);
 }
@@ -146,18 +124,22 @@ export async function getImportDraft(token: string): Promise<ImportedRecipe> {
 export async function createRecipe(
   payload: SaveRecipePayload,
 ): Promise<Recipe> {
-  const res = await fetchOrOffline("/api/recipes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const res = await apiFetch(
+    "/api/recipes",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    { timeoutMs: 20_000, bypassCircuitBreaker: true },
+  );
   const created = await parseJsonOrThrow<Recipe>(res);
   void saveCachedRecipe(created);
   return created;
 }
 
 export async function deleteRecipe(id: number): Promise<void> {
-  const res = await fetchOrOffline(`/api/recipes/${id}`, {
+  const res = await apiFetch(`/api/recipes/${id}`, {
     method: "DELETE",
   });
   if (!res.ok) {
