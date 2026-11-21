@@ -56,6 +56,67 @@ class ShoppingListsViewTests(TestCase):
         items = add_res.json()["items"]
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0]["recipe_title"], "Tacos")
+        self.assertEqual(items[0]["recipes"], [{"id": recipe.id, "title": "Tacos"}])
+        self.assertEqual(items[0]["aisle"], "Meat & Seafood")
+        self.assertEqual(items[1]["aisle"], "Other")
+        self.assertIn("Produce", add_res.json()["aisles"])
+
+        # Reject invalid aisle PATCH
+        bad_aisle = self.client.patch(
+            f"/api/shopping-lists/{list_id}/items/{items[1]['id']}",
+            data=json.dumps({"aisle": "Invalid Aisle"}),
+            content_type="application/json",
+        )
+        self.assertEqual(bad_aisle.status_code, 400)
+
+        # Updating an item's aisle persists an override remembered for future additions
+        aisle_patch = self.client.patch(
+            f"/api/shopping-lists/{list_id}/items/{items[1]['id']}",
+            data=json.dumps({"aisle": "Pantry & Baking"}),
+            content_type="application/json",
+        )
+        self.assertEqual(aisle_patch.status_code, 200)
+        self.assertEqual(aisle_patch.json()["aisle"], "Pantry & Baking")
+
+        # Verify override applies on a new list for the same item
+        l2_id = self.client.post(
+            "/api/shopping-lists",
+            data=json.dumps({"name": "Next Week"}),
+            content_type="application/json",
+        ).json()["id"]
+        l2_res = self.client.post(
+            f"/api/shopping-lists/{l2_id}/items",
+            data=json.dumps({"items": [{"name": "paper towels"}]}),
+            content_type="application/json",
+        )
+        self.assertEqual(l2_res.json()["items"][0]["aisle"], "Pantry & Baking")
+        self.client.delete(f"/api/shopping-lists/{l2_id}")
+
+        # Merge a second recipe's beef into the same item -> returns both recipe chips
+        recipe2 = Recipe.objects.create(title="Chili")
+        merge_res = self.client.post(
+            f"/api/shopping-lists/{list_id}/items",
+            data=json.dumps(
+                {
+                    "items": [
+                        {"quantity": "2", "unit": "pound", "name": "beef", "recipe_id": recipe2.id},
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(merge_res.status_code, 201)
+        merged_beef = next(
+            it for it in merge_res.json()["items"] if it["name"] == "beef"
+        )
+        self.assertEqual(merged_beef["quantity"], "3")
+        self.assertEqual(
+            merged_beef["recipes"],
+            [
+                {"id": recipe.id, "title": "Tacos"},
+                {"id": recipe2.id, "title": "Chili"},
+            ],
+        )
 
         # Toggle checked on first item
         p_res = self.client.patch(

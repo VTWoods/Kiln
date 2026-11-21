@@ -68,6 +68,7 @@ class ShoppingListItem(models.Model):
     name = models.TextField()
     quantity = models.TextField(blank=True, default="")
     unit = models.TextField(blank=True, default="")
+    aisle = models.TextField(blank=True, default="")
     checked = models.BooleanField(default=False)
     recipe = models.ForeignKey(
         Recipe,
@@ -77,6 +78,12 @@ class ShoppingListItem(models.Model):
         related_name="shopping_list_items",
         db_column="recipe_id",
     )
+    recipes = models.ManyToManyField(
+        Recipe,
+        blank=True,
+        related_name="merged_shopping_list_items",
+        db_table="shopping_list_item_recipes",
+    )
 
     class Meta:
         db_table = "shopping_list_items"
@@ -85,3 +92,33 @@ class ShoppingListItem(models.Model):
     def __str__(self) -> str:
         parts = [p for p in (self.quantity, self.unit, self.name) if p]
         return " ".join(parts)
+
+
+class IngredientAisleOverride(models.Model):
+    """User-remembered grocery aisle overrides keyed by normalized ingredient name."""
+
+    ingredient_key = models.TextField(unique=True)
+    aisle = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ingredient_aisle_overrides"
+        ordering = ["ingredient_key"]
+
+    def __str__(self) -> str:
+        return f"{self.ingredient_key} -> {self.aisle}"
+
+
+class PantryStaple(models.Model):
+    """Common household staples shown first & unchecked when adding recipes to a shopping list."""
+
+    name = models.TextField()
+    ingredient_key = models.TextField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pantry_staples"
+        ordering = ["name", "id"]
+
+    def __str__(self) -> str:
+        return self.name

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import ManagePantryStaplesModal from "../components/ManagePantryStaplesModal";
 import {
   addShoppingListItems,
   clearCheckedShoppingListItems,
@@ -12,6 +13,7 @@ import {
 } from "../api/shoppingLists";
 import {
   defaultShoppingListName,
+  GROCERY_AISLES,
   type ShoppingList,
   type ShoppingListItem,
 } from "../types/shoppingList";
@@ -42,6 +44,8 @@ export default function ShoppingListsPage() {
   const [itemUnit, setItemUnit] = useState("");
   const [itemName, setItemName] = useState("");
   const [addingItem, setAddingItem] = useState(false);
+  const [groupByAisle, setGroupByAisle] = useState(true);
+  const [showStaplesModal, setShowStaplesModal] = useState(false);
 
   const initialListId = Number(searchParams.get("list") || 0);
 
@@ -247,6 +251,28 @@ export default function ShoppingListsPage() {
     }
   };
 
+  const handleChangeAisle = async (item: ShoppingListItem, nextAisle: string) => {
+    if (!activeList || item.aisle === nextAisle) return;
+
+    // Optimistic update so the item immediately moves to its new aisle group
+    setActiveList((prev) => {
+      if (!prev || !prev.items) return prev;
+      return {
+        ...prev,
+        items: prev.items.map((it) =>
+          it.id === item.id ? { ...it, aisle: nextAisle } : it,
+        ),
+      };
+    });
+
+    try {
+      await updateShoppingListItem(activeList.id, item.id, { aisle: nextAisle });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update aisle.");
+      void loadActiveList(activeList.id);
+    }
+  };
+
   const handleClearChecked = async () => {
     if (!activeList) return;
     setError(null);
@@ -274,6 +300,35 @@ export default function ShoppingListsPage() {
   const items = activeList?.items ?? [];
   const uncheckedItems = items.filter((i) => !i.checked);
   const checkedItems = items.filter((i) => i.checked);
+  const availableAisles =
+    activeList?.aisles && activeList.aisles.length > 0
+      ? activeList.aisles
+      : [...GROCERY_AISLES];
+
+  const groupedUnchecked = (() => {
+    const byAisle = new Map<string, ShoppingListItem[]>();
+    for (const item of uncheckedItems) {
+      const aisle = item.aisle || "Other";
+      const bucket = byAisle.get(aisle);
+      if (bucket) {
+        bucket.push(item);
+      } else {
+        byAisle.set(aisle, [item]);
+      }
+    }
+    const ordered: { aisle: string; items: ShoppingListItem[] }[] = [];
+    for (const aisle of availableAisles) {
+      const bucket = byAisle.get(aisle);
+      if (bucket && bucket.length > 0) {
+        ordered.push({ aisle, items: bucket });
+        byAisle.delete(aisle);
+      }
+    }
+    for (const [aisle, bucket] of byAisle.entries()) {
+      ordered.push({ aisle, items: bucket });
+    }
+    return ordered;
+  })();
 
   return (
     <section className="space-y-6">
@@ -287,15 +342,24 @@ export default function ShoppingListsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() =>
-            showNewListForm ? setShowNewListForm(false) : openNewListForm()
-          }
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
-        >
-          + New List
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowStaplesModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 shadow-xs transition-colors hover:bg-stone-50"
+          >
+            Pantry Staples
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              showNewListForm ? setShowNewListForm(false) : openNewListForm()
+            }
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
+          >
+            + New List
+          </button>
+        </div>
       </div>
 
       {showNewListForm && (
@@ -416,7 +480,37 @@ export default function ShoppingListsPage() {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div
+                      className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-0.5 text-xs"
+                      role="group"
+                      aria-label="List grouping"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setGroupByAisle(true)}
+                        className={[
+                          "rounded-md px-2.5 py-1 font-medium transition-colors",
+                          groupByAisle
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-500 hover:text-stone-700",
+                        ].join(" ")}
+                      >
+                        By Aisle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGroupByAisle(false)}
+                        className={[
+                          "rounded-md px-2.5 py-1 font-medium transition-colors",
+                          !groupByAisle
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-500 hover:text-stone-700",
+                        ].join(" ")}
+                      >
+                        Flat
+                      </button>
+                    </div>
                     {checkedItems.length > 0 && (
                       <button
                         type="button"
@@ -499,18 +593,48 @@ export default function ShoppingListsPage() {
                   </div>
                 ) : (
                   <div className="mt-4 space-y-4">
-                    {uncheckedItems.length > 0 && (
-                      <ul className="divide-y divide-stone-100">
-                        {uncheckedItems.map((item) => (
-                          <ShoppingListItemRow
-                            key={item.id}
-                            item={item}
-                            onToggle={handleToggleItem}
-                            onDelete={handleDeleteItem}
-                          />
-                        ))}
-                      </ul>
-                    )}
+                    {uncheckedItems.length > 0 &&
+                      (groupByAisle ? (
+                        <div className="space-y-4">
+                          {groupedUnchecked.map((group) => (
+                            <div key={group.aisle}>
+                              <div className="mb-1 flex items-center justify-between border-b border-stone-100 pb-1">
+                                <h3 className="text-xs font-semibold tracking-wide text-stone-500 uppercase">
+                                  {group.aisle}
+                                </h3>
+                                <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500">
+                                  {group.items.length}
+                                </span>
+                              </div>
+                              <ul className="divide-y divide-stone-100">
+                                {group.items.map((item) => (
+                                  <ShoppingListItemRow
+                                    key={item.id}
+                                    item={item}
+                                    aisles={availableAisles}
+                                    onToggle={handleToggleItem}
+                                    onDelete={handleDeleteItem}
+                                    onChangeAisle={handleChangeAisle}
+                                  />
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <ul className="divide-y divide-stone-100">
+                          {uncheckedItems.map((item) => (
+                            <ShoppingListItemRow
+                              key={item.id}
+                              item={item}
+                              aisles={availableAisles}
+                              onToggle={handleToggleItem}
+                              onDelete={handleDeleteItem}
+                              onChangeAisle={handleChangeAisle}
+                            />
+                          ))}
+                        </ul>
+                      ))}
 
                     {checkedItems.length > 0 && (
                       <div className="border-t border-stone-100 pt-3">
@@ -522,8 +646,10 @@ export default function ShoppingListsPage() {
                             <ShoppingListItemRow
                               key={item.id}
                               item={item}
+                              aisles={availableAisles}
                               onToggle={handleToggleItem}
                               onDelete={handleDeleteItem}
+                              onChangeAisle={handleChangeAisle}
                             />
                           ))}
                         </ul>
@@ -536,20 +662,34 @@ export default function ShoppingListsPage() {
           </div>
         </div>
       )}
+      {showStaplesModal && (
+        <ManagePantryStaplesModal onClose={() => setShowStaplesModal(false)} />
+      )}
     </section>
   );
 }
 
 function ShoppingListItemRow({
   item,
+  aisles,
   onToggle,
   onDelete,
+  onChangeAisle,
 }: {
   item: ShoppingListItem;
+  aisles: string[];
   onToggle: (item: ShoppingListItem) => void;
   onDelete: (item: ShoppingListItem) => void;
+  onChangeAisle: (item: ShoppingListItem, aisle: string) => void;
 }) {
   const amount = [item.quantity, item.unit].filter(Boolean).join(" ");
+  const currentAisle = item.aisle || "Other";
+  const recipeChips =
+    item.recipes && item.recipes.length > 0
+      ? item.recipes
+      : item.recipe_id && item.recipe_title
+        ? [{ id: item.recipe_id, title: item.recipe_title }]
+        : [];
 
   return (
     <li className="flex items-center justify-between gap-3 py-2.5 text-sm">
@@ -560,7 +700,7 @@ function ShoppingListItemRow({
           onChange={() => onToggle(item)}
           className="h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
         />
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span
             className={[
               "break-words",
@@ -580,25 +720,48 @@ function ShoppingListItemRow({
             {item.name}
           </span>
 
-          {item.recipe_id && item.recipe_title && (
-            <Link
-              to={`/recipes/${item.recipe_id}`}
-              className="ml-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
-            >
-              {item.recipe_title}
-            </Link>
+          {recipeChips.length > 0 && (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {recipeChips.map((recipe) => (
+                <Link
+                  key={recipe.id}
+                  to={`/recipes/${recipe.id}`}
+                  className="inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+                >
+                  {recipe.title}
+                </Link>
+              ))}
+            </span>
           )}
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => onDelete(item)}
-        className="shrink-0 rounded-md px-2 py-1 text-xs text-stone-400 hover:bg-stone-100 hover:text-red-600"
-        aria-label={`Remove ${item.name}`}
-      >
-        ✕
-      </button>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {!item.checked && (
+          <select
+            value={currentAisle}
+            onChange={(e) => onChangeAisle(item, e.target.value)}
+            aria-label={`Aisle for ${item.name}`}
+            title="Change aisle (remembered for next time)"
+            className="max-w-[9.5rem] cursor-pointer rounded-md border border-transparent bg-stone-50 px-1.5 py-1 text-[11px] text-stone-500 transition-colors hover:border-stone-200 hover:bg-white hover:text-stone-700 focus:border-amber-400 focus:bg-white focus:text-stone-800 focus:outline-none"
+          >
+            {aisles.map((aisle) => (
+              <option key={aisle} value={aisle}>
+                {aisle}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onDelete(item)}
+          className="shrink-0 rounded-md px-2 py-1 text-xs text-stone-400 hover:bg-stone-100 hover:text-red-600"
+          aria-label={`Remove ${item.name}`}
+        >
+          ✕
+        </button>
+      </div>
     </li>
   );
 }

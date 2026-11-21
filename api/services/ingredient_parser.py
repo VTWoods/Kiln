@@ -111,10 +111,13 @@ def _extract_amount(
                 us_low, us_high, us_unit = to_us_customary(tot_low, tot_high, second_unit)
                 return format_quantity_range(us_low, us_high), us_unit
 
-    # Case 2: Dual metric + US amount listed (e.g. "200 g (7 oz)") -> prefer the US customary one
+    # Case 2: Primary amount is metric with a US customary equivalent listed
+    # (e.g. "200 g (7 oz)") -> prefer the US customary one.
+    # Do NOT override non-metric primary amounts like counts or packages
+    # (e.g. "4 medium carrots (10 ounces; 275g)" stays 4 carrots).
     chosen = flat[0]
-    if len(flat) > 1:
-        for candidate in flat:
+    if len(flat) > 1 and flat[0].unit_system == UnitSystem.METRIC:
+        for candidate in flat[1:]:
             if candidate.unit_system == UnitSystem.US_CUSTOMARY and not getattr(
                 candidate, "SINGULAR", False
             ):
@@ -134,6 +137,17 @@ def _extract_amount(
     return format_quantity_range(us_low, us_high), us_unit
 
 
+_SIZE_QUALIFIERS = frozenset({"small", "medium", "large", "extra-large", "jumbo", "mini"})
+
+
+def _split_unit_size_prefix(unit: str) -> tuple[str, str]:
+    """Split a leading size adjective out of a unit (e.g. 'medium clove' -> ('clove', 'medium'))."""
+    parts = unit.split()
+    if len(parts) >= 2 and parts[0].lower() in _SIZE_QUALIFIERS:
+        return " ".join(parts[1:]), parts[0].lower()
+    return unit, ""
+
+
 class NLPIngredientParser(IngredientParser):
     """IngredientParser powered by ingredient-parser-nlp with US singular unit normalization."""
 
@@ -147,7 +161,7 @@ class NLPIngredientParser(IngredientParser):
         try:
             parsed = nlp_parse_ingredient(
                 cleaned,
-                separate_names=True,
+                separate_names=False,
                 discard_isolated_stop_words=True,
                 expect_name_in_output=True,
                 volumetric_units_system="us_customary",
@@ -159,6 +173,7 @@ class NLPIngredientParser(IngredientParser):
             )
 
         quantity, unit = _extract_amount(list(parsed.amount or []))
+        unit, unit_size = _split_unit_size_prefix(unit)
 
         # Combine extracted ingredient name tokens cleanly
         name_parts = [
@@ -179,6 +194,8 @@ class NLPIngredientParser(IngredientParser):
 
         # Combine size, preparation, comment, and purpose into the preparation column
         prep_parts: list[str] = []
+        if unit_size:
+            prep_parts.append(unit_size)
         for field in (parsed.size, parsed.preparation, parsed.comment, parsed.purpose):
             if field is not None:
                 txt = clean_whitespace(field.text).strip(",; ")

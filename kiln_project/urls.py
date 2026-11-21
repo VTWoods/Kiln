@@ -3,7 +3,7 @@
 from django.contrib import admin
 from django.urls import path, re_path
 
-from api.views import cast, health, recipes, shopping_lists, spa
+from api.views import cast, health, pantry_staples, recipes, shopping_lists, spa
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -33,6 +33,13 @@ urlpatterns = [
     path(
         "api/shopping-lists/<str:list_id>/checked",
         shopping_lists.shopping_list_clear_checked_view,
+    ),
+    # Pantry staples
+    path("api/pantry-staples/toggle", pantry_staples.pantry_staple_toggle_view),
+    path("api/pantry-staples", pantry_staples.pantry_staples_collection_view),
+    path(
+        "api/pantry-staples/<str:staple_id>",
+        pantry_staples.pantry_staple_detail_view,
     ),
     # Nest Hub / Cast
     path("api/cast/devices", cast.discover_devices_view),

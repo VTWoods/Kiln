@@ -18,7 +18,7 @@ RUN apt-get update \
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && python3 -m nltk.downloader -d /usr/local/share/nltk_data averaged_perceptron_tagger_eng
+    && python3 -m nltk.downloader -d /usr/local/share/nltk_data averaged_perceptron_tagger_eng wordnet
 
 COPY manage.py ./
 COPY kiln_project/ ./kiln_project/

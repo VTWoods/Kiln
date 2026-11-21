@@ -32,14 +32,30 @@ class ShoppingListMergerTests(TestCase):
         )
 
         items = {
-            (it.name.lower(), it.unit): it.quantity
-            for it in ShoppingListItem.objects.filter(shopping_list=sl)
+            (it.name.lower(), it.unit): it
+            for it in ShoppingListItem.objects.filter(shopping_list=sl).prefetch_related("recipes")
         }
-        self.assertEqual(items[("garlic", "clove")], "5")
-        self.assertEqual(items[("butter", "pound")], "1 1/2")
-        # Incompatible cilantro units remain separate
-        self.assertEqual(items[("cilantro", "bunch")], "1")
-        self.assertEqual(items[("cilantro", "tablespoon")], "2")
+        self.assertEqual(items[("garlic", "clove")].quantity, "5")
+        self.assertEqual(
+            {r.id for r in items[("garlic", "clove")].recipes.all()},
+            {r1.id, r2.id},
+        )
+        self.assertEqual(items[("butter", "pound")].quantity, "1 1/2")
+        self.assertEqual(
+            {r.id for r in items[("butter", "pound")].recipes.all()},
+            {r1.id, r2.id},
+        )
+        # Incompatible cilantro units remain separate with their individual recipes
+        self.assertEqual(items[("cilantro", "bunch")].quantity, "1")
+        self.assertEqual(
+            {r.id for r in items[("cilantro", "bunch")].recipes.all()},
+            {r1.id},
+        )
+        self.assertEqual(items[("cilantro", "tablespoon")].quantity, "2")
+        self.assertEqual(
+            {r.id for r in items[("cilantro", "tablespoon")].recipes.all()},
+            {r2.id},
+        )
         self.assertEqual(len(items), 4)
 
     def test_merges_duplicates_within_single_batch_and_skips_checked_items(self) -> None:
@@ -66,3 +82,28 @@ class ShoppingListMergerTests(TestCase):
         self.assertEqual((checked[0].quantity, checked[0].unit), ("2", "tablespoon"))
         self.assertEqual(len(unchecked), 1)
         self.assertEqual((unchecked[0].quantity, unchecked[0].unit), ("1/4", "cup"))
+
+    def test_merges_singular_and_plural_ingredient_names_and_counts(self) -> None:
+        sl = ShoppingList.objects.create(name="11/21/2026")
+        merge_shopping_list_items(
+            sl,
+            [
+                {"quantity": "6-8", "unit": "", "name": "carrots"},
+                {"quantity": "1", "unit": "", "name": "bay leaf"},
+            ],
+        )
+        merge_shopping_list_items(
+            sl,
+            [
+                {"quantity": "4", "unit": "", "name": "carrot"},
+                {"quantity": "2", "unit": "", "name": "bay leaves"},
+            ],
+        )
+
+        items = {
+            it.name.lower(): (it.quantity, it.unit)
+            for it in ShoppingListItem.objects.filter(shopping_list=sl)
+        }
+        self.assertEqual(items["carrots"], ("10-12", ""))
+        self.assertEqual(items["bay leaf"], ("3", ""))
+        self.assertEqual(len(items), 2)

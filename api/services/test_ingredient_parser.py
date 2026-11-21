@@ -52,6 +52,30 @@ class IngredientParserTests(SimpleTestCase):
         self.assertEqual((tomatoes.quantity, tomatoes.unit, tomatoes.name), ("29", "ounce", "diced tomatoes"))
         self.assertEqual(tomatoes.preparation, "drained")
 
+    def test_preserves_primary_counts_splits_unit_size_and_keeps_or_names(self) -> None:
+        # Primary count with parenthetical weight/metric -> keep count, not parenthetical ounces
+        carrots = parse_ingredient(
+            "4 medium carrots (10 ounces; 275g), 2 left whole, 2 cut into bite-sized pieces"
+        )
+        self.assertEqual((carrots.quantity, carrots.unit, carrots.name), ("4", "", "carrots"))
+        self.assertIn("medium", carrots.preparation)
+        self.assertIn("2 left whole", carrots.preparation)
+
+        # Primary container unit with parenthetical weight -> keep packet count
+        gelatin = parse_ingredient("4 packets powdered unflavored gelatin (1 ounce; 30g)")
+        self.assertEqual((gelatin.quantity, gelatin.unit, gelatin.name), ("4", "packet", "powdered unflavored gelatin"))
+
+        # Size prefix on unit ("medium cloves") is split into preparation
+        garlic = parse_ingredient("3 medium cloves garlic, unpeeled")
+        self.assertEqual((garlic.quantity, garlic.unit, garlic.name), ("3", "clove", "garlic"))
+        self.assertIn("medium", garlic.preparation)
+        self.assertIn("unpeeled", garlic.preparation)
+
+        # Alternative names preserve "or" phrasing instead of becoming "and"
+        stock = parse_ingredient("1 quart (950mL) homemade or store-bought low-sodium chicken stock")
+        self.assertEqual((stock.quantity, stock.unit), ("1", "quart"))
+        self.assertEqual(stock.name, "homemade or store-bought low-sodium chicken stock")
+
     def test_handles_unitless_and_empty_lines(self) -> None:
         empty = parse_ingredient("   ")
         self.assertEqual((empty.quantity, empty.unit, empty.name, empty.preparation), ("", "", "", ""))

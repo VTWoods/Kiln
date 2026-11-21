@@ -72,7 +72,9 @@ export async function addShoppingListItems(
 export async function updateShoppingListItem(
   listId: number,
   itemId: number,
-  patch: Partial<Pick<ShoppingListItem, "checked" | "name" | "quantity" | "unit">>,
+  patch: Partial<
+    Pick<ShoppingListItem, "checked" | "name" | "quantity" | "unit" | "aisle">
+  >,
 ): Promise<ShoppingListItem> {
   const res = await fetch(`/api/shopping-lists/${listId}/items/${itemId}`, {
     method: "PATCH",

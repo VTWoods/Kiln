@@ -19,6 +19,7 @@ from api.services.fetcher import (
 )
 from api.services.images import ImageStore, is_local_image_url
 from api.services.import_drafts import draft_store
+from api.services.pantry_staples import get_pantry_staple_keys, is_ingredient_staple
 from api.views import (
     get_image_store,
     get_importer,
@@ -30,7 +31,9 @@ from api.views import (
 logger = logging.getLogger(__name__)
 
 
-def _serialize_ingredient(ing: RecipeIngredient) -> dict[str, Any]:
+def _serialize_ingredient(
+    ing: RecipeIngredient, *, staple_keys: set[str] | None = None
+) -> dict[str, Any]:
     return {
         "id": ing.id,
         "recipe_id": ing.recipe_id,
@@ -39,6 +42,9 @@ def _serialize_ingredient(ing: RecipeIngredient) -> dict[str, Any]:
         "unit": ing.unit,
         "preparation": ing.preparation,
         "sort_order": ing.sort_order,
+        "is_pantry_staple": is_ingredient_staple(
+            ing.name, unit=ing.unit, staple_keys=staple_keys
+        ),
     }
 
 
@@ -63,7 +69,10 @@ def _serialize_recipe(
     }
     if include_ingredients:
         ingredients = list(recipe.ingredients.all().order_by("sort_order", "id"))
-        payload["ingredients"] = [_serialize_ingredient(i) for i in ingredients]
+        staple_keys = get_pantry_staple_keys()
+        payload["ingredients"] = [
+            _serialize_ingredient(i, staple_keys=staple_keys) for i in ingredients
+        ]
         payload["ingredient_count"] = len(ingredients)
     else:
         payload["ingredient_count"] = (

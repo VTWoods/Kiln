@@ -7,8 +7,12 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from api.models import ShoppingList, ShoppingListItem
-from api.services.shopping_list_merger import merge_shopping_list_items
+from api.models import IngredientAisleOverride, ShoppingList, ShoppingListItem
+from api.services.aisle_categorizer import AISLES, DEFAULT_AISLE, normalize_aisle
+from api.services.shopping_list_merger import (
+    ingredient_merge_key,
+    merge_shopping_list_items,
+)
 from api.views import iso_timestamp, parse_json_body, parse_positive_int
 
 
@@ -19,12 +23,29 @@ def _serialize_item(item: ShoppingListItem) -> dict[str, Any]:
         "name": item.name,
         "quantity": item.quantity,
         "unit": item.unit,
+        "aisle": item.aisle or DEFAULT_AISLE,
         "checked": bool(item.checked),
     }
-    if item.recipe_id is not None:
+
+    contributing: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for r in sorted(item.recipes.all(), key=lambda rec: rec.id):
+        if r.id not in seen_ids:
+            seen_ids.add(r.id)
+            contributing.append({"id": r.id, "title": r.title})
+    if item.recipe_id is not None and item.recipe_id not in seen_ids:
+        if item.recipe is not None and item.recipe.title:
+            contributing.append({"id": item.recipe_id, "title": item.recipe.title})
+
+    if contributing:
+        payload["recipes"] = contributing
+        payload["recipe_id"] = contributing[0]["id"]
+        payload["recipe_title"] = contributing[0]["title"]
+    elif item.recipe_id is not None:
         payload["recipe_id"] = item.recipe_id
         if item.recipe is not None and item.recipe.title:
             payload["recipe_title"] = item.recipe.title
+
     return payload
 
 
@@ -41,9 +62,12 @@ def _serialize_list(
     }
     if include_items:
         items = list(
-            shopping_list.items.select_related("recipe").order_by("checked", "id")
+            shopping_list.items.select_related("recipe")
+            .prefetch_related("recipes")
+            .order_by("checked", "id")
         )
         payload["items"] = [_serialize_item(it) for it in items]
+        payload["aisles"] = list(AISLES)
         payload["item_count"] = len(items)
         payload["checked_count"] = sum(1 for it in items if it.checked)
     else:
@@ -184,8 +208,10 @@ def shopping_list_item_detail_view(
             return err_resp or JsonResponse({"error": "invalid request body"}, status=400)
 
         try:
-            item = ShoppingListItem.objects.select_related("recipe").get(
-                pk=iid, shopping_list_id=lid
+            item = (
+                ShoppingListItem.objects.select_related("recipe")
+                .prefetch_related("recipes")
+                .get(pk=iid, shopping_list_id=lid)
             )
         except ShoppingListItem.DoesNotExist:
             return JsonResponse({"error": "shopping list item not found"}, status=404)
@@ -198,6 +224,17 @@ def shopping_list_item_detail_view(
             item.quantity = str(data["quantity"]).strip()
         if "unit" in data and data["unit"] is not None:
             item.unit = str(data["unit"]).strip()
+        if "aisle" in data and data["aisle"] is not None:
+            valid_aisle = normalize_aisle(str(data["aisle"]))
+            if valid_aisle is None:
+                return JsonResponse({"error": "invalid aisle"}, status=400)
+            item.aisle = valid_aisle
+            merge_key = ingredient_merge_key(item.name)
+            if merge_key:
+                IngredientAisleOverride.objects.update_or_create(
+                    ingredient_key=merge_key,
+                    defaults={"aisle": valid_aisle},
+                )
         if "checked" in data and data["checked"] is not None:
             item.checked = bool(data["checked"])
 

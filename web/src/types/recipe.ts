@@ -6,6 +6,7 @@ export type RecipeIngredient = {
   unit: string;
   preparation: string;
   sort_order: number;
+  is_pantry_staple?: boolean;
 };
 
 export type Recipe = {

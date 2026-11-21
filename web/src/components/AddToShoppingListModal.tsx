@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { togglePantryStaple } from "../api/pantryStaples";
 import { getRecipe } from "../api/recipes";
 import {
   addShoppingListItems,
@@ -39,10 +40,16 @@ export default function AddToShoppingListModal({
   const [ingredients, setIngredients] = useState<RecipeIngredient[]>(
     initialIngredients ?? [],
   );
-  // Set of ingredient IDs the user wants to ADD (unchecking removes items they already have)
+  // Set of ingredient IDs the user wants to ADD (pantry staples start unchecked)
   const [includedIds, setIncludedIds] = useState<Set<number>>(
-    () => new Set((initialIngredients ?? []).map((i) => i.id)),
+    () =>
+      new Set(
+        (initialIngredients ?? [])
+          .filter((i) => !i.is_pantry_staple)
+          .map((i) => i.id),
+      ),
   );
+  const [togglingStapleId, setTogglingStapleId] = useState<number | null>(null);
 
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [selectedListValue, setSelectedListValue] =
@@ -66,15 +73,20 @@ export default function AddToShoppingListModal({
     setLoading(true);
     setError(null);
 
-    const recipePromise = initialIngredients
-      ? Promise.resolve(initialIngredients)
-      : getRecipe(recipeId).then((r) => r.ingredients ?? []);
+    // Always fetch recipe ingredients fresh so pantry staple flags reflect latest edits
+    const recipePromise = getRecipe(recipeId).then((r) => r.ingredients ?? []);
 
     Promise.all([recipePromise, listShoppingLists()])
       .then(([loadedIngredients, loadedLists]) => {
         if (!active) return;
         setIngredients(loadedIngredients);
-        setIncludedIds(new Set(loadedIngredients.map((i) => i.id)));
+        setIncludedIds(
+          new Set(
+            loadedIngredients
+              .filter((i) => !i.is_pantry_staple)
+              .map((i) => i.id),
+          ),
+        );
         setLists(loadedLists);
         if (loadedLists.length > 0) {
           setSelectedListValue(String(loadedLists[0].id));
@@ -98,7 +110,7 @@ export default function AddToShoppingListModal({
     return () => {
       active = false;
     };
-  }, [recipeId, initialIngredients]);
+  }, [recipeId]);
 
   const toggleIngredient = (id: number) => {
     setIncludedIds((prev) => {
@@ -118,6 +130,54 @@ export default function AddToShoppingListModal({
 
   const clearAll = () => {
     setIncludedIds(new Set());
+  };
+
+  const stapleIngredients = ingredients.filter((i) => i.is_pantry_staple);
+  const regularIngredients = ingredients.filter((i) => !i.is_pantry_staple);
+  const selectedStapleCount = stapleIngredients.filter((i) =>
+    includedIds.has(i.id),
+  ).length;
+
+  const setStaplesIncluded = (include: boolean) => {
+    setIncludedIds((prev) => {
+      const next = new Set(prev);
+      for (const s of stapleIngredients) {
+        if (include) {
+          next.add(s.id);
+        } else {
+          next.delete(s.id);
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleToggleStaple = async (ing: RecipeIngredient) => {
+    setTogglingStapleId(ing.id);
+    setError(null);
+    try {
+      const res = await togglePantryStaple(ing.name);
+      // Refresh recipe ingredients so compound/matching items stay accurate
+      const fresh = await getRecipe(recipeId).then((r) => r.ingredients ?? []);
+      setIngredients(fresh);
+      setIncludedIds((prev) => {
+        const next = new Set(prev);
+        if (res.is_pantry_staple) {
+          next.delete(ing.id);
+        } else {
+          next.add(ing.id);
+        }
+        return next;
+      });
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to update pantry staple.",
+      );
+    } finally {
+      setTogglingStapleId(null);
+    }
   };
 
   const selectedIngredients = ingredients.filter((i) => includedIds.has(i.id));
@@ -319,64 +379,177 @@ export default function AddToShoppingListModal({
                     This recipe has no ingredients to add.
                   </div>
                 ) : (
-                  <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
-                    {ingredients.map((ing) => {
-                      const included = includedIds.has(ing.id);
-                      const amount = [ing.quantity, ing.unit]
-                        .filter(Boolean)
-                        .join(" ");
-
-                      return (
-                        <li key={ing.id}>
-                          <label
-                            className={[
-                              "flex cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 text-sm transition-colors",
-                              included
-                                ? "hover:bg-amber-50/40"
-                                : "bg-stone-50/80 hover:bg-stone-100/80",
-                            ].join(" ")}
+                  <div className="space-y-4">
+                    {stapleIngredients.length > 0 && (
+                      <div className="overflow-hidden rounded-xl border border-amber-200/80 bg-amber-50/30">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 bg-amber-50/70 px-3.5 py-2">
+                          <div>
+                            <p className="text-xs font-semibold tracking-wide text-amber-900 uppercase">
+                              Pantry Staples ({selectedStapleCount}/
+                              {stapleIngredients.length} selected)
+                            </p>
+                            <p className="text-[11px] text-amber-800/80">
+                              Unchecked by default — check any you&apos;re out of
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setStaplesIncluded(
+                                selectedStapleCount < stapleIngredients.length,
+                              )
+                            }
+                            className="text-xs font-medium text-amber-800 hover:text-amber-950 hover:underline"
                           >
-                            <div className="flex min-w-0 items-center gap-3">
-                              <input
-                                type="checkbox"
-                                checked={included}
-                                onChange={() => toggleIngredient(ing.id)}
-                                className="h-4 w-4 shrink-0 rounded border-stone-300 text-amber-600 accent-amber-600 focus:ring-amber-500"
-                              />
-                              <span
+                            {selectedStapleCount < stapleIngredients.length
+                              ? "Include all staples"
+                              : "Skip all staples"}
+                          </button>
+                        </div>
+                        <ul className="divide-y divide-amber-100/80 bg-white/80">
+                          {stapleIngredients.map((ing) => {
+                            const included = includedIds.has(ing.id);
+                            const amount = [ing.quantity, ing.unit]
+                              .filter(Boolean)
+                              .join(" ");
+                            const busy = togglingStapleId === ing.id;
+
+                            return (
+                              <li
+                                key={ing.id}
                                 className={[
-                                  "min-w-0 break-words",
+                                  "flex items-center justify-between gap-2 px-3.5 py-2 text-sm transition-colors",
                                   included
-                                    ? "text-stone-800"
-                                    : "text-stone-400 line-through",
+                                    ? "bg-white hover:bg-amber-50/40"
+                                    : "bg-stone-50/60 hover:bg-stone-100/70",
                                 ].join(" ")}
                               >
-                                {amount && (
+                                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={included}
+                                    onChange={() => toggleIngredient(ing.id)}
+                                    className="h-4 w-4 shrink-0 rounded border-stone-300 text-amber-600 accent-amber-600 focus:ring-amber-500"
+                                  />
                                   <span
                                     className={[
-                                      "mr-1.5 font-medium",
+                                      "min-w-0 break-words",
                                       included
-                                        ? "text-amber-800"
-                                        : "text-stone-400",
+                                        ? "text-stone-800"
+                                        : "text-stone-400 line-through",
                                     ].join(" ")}
                                   >
-                                    {amount}
+                                    {amount && (
+                                      <span
+                                        className={[
+                                          "mr-1.5 font-medium",
+                                          included
+                                            ? "text-amber-800"
+                                            : "text-stone-400",
+                                        ].join(" ")}
+                                      >
+                                        {amount}
+                                      </span>
+                                    )}
+                                    {ing.name}
                                   </span>
-                                )}
-                                {ing.name}
-                              </span>
-                            </div>
+                                </label>
 
-                            {!included && (
-                              <span className="shrink-0 rounded-full bg-stone-200/80 px-2 py-0.5 text-[11px] font-medium text-stone-600">
-                                Already have
-                              </span>
-                            )}
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleStaple(ing)}
+                                  disabled={busy || submitting}
+                                  title="Remove from your Pantry Staples"
+                                  className="shrink-0 rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-medium text-stone-500 hover:border-stone-300 hover:text-stone-800 disabled:opacity-50"
+                                >
+                                  {busy ? "…" : "Unmark staple"}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+
+                    {regularIngredients.length > 0 && (
+                      <div className="space-y-1.5">
+                        {stapleIngredients.length > 0 && (
+                          <p className="text-xs font-semibold tracking-wide text-stone-500 uppercase">
+                            Recipe Ingredients ({regularIngredients.length})
+                          </p>
+                        )}
+                        <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
+                          {regularIngredients.map((ing) => {
+                            const included = includedIds.has(ing.id);
+                            const amount = [ing.quantity, ing.unit]
+                              .filter(Boolean)
+                              .join(" ");
+                            const busy = togglingStapleId === ing.id;
+
+                            return (
+                              <li
+                                key={ing.id}
+                                className={[
+                                  "flex items-center justify-between gap-2 px-3.5 py-2.5 text-sm transition-colors",
+                                  included
+                                    ? "hover:bg-amber-50/40"
+                                    : "bg-stone-50/80 hover:bg-stone-100/80",
+                                ].join(" ")}
+                              >
+                                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={included}
+                                    onChange={() => toggleIngredient(ing.id)}
+                                    className="h-4 w-4 shrink-0 rounded border-stone-300 text-amber-600 accent-amber-600 focus:ring-amber-500"
+                                  />
+                                  <span
+                                    className={[
+                                      "min-w-0 break-words",
+                                      included
+                                        ? "text-stone-800"
+                                        : "text-stone-400 line-through",
+                                    ].join(" ")}
+                                  >
+                                    {amount && (
+                                      <span
+                                        className={[
+                                          "mr-1.5 font-medium",
+                                          included
+                                            ? "text-amber-800"
+                                            : "text-stone-400",
+                                        ].join(" ")}
+                                      >
+                                        {amount}
+                                      </span>
+                                    )}
+                                    {ing.name}
+                                  </span>
+                                </label>
+
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  {!included && (
+                                    <span className="rounded-full bg-stone-200/80 px-2 py-0.5 text-[11px] font-medium text-stone-600">
+                                      Already have
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleStaple(ing)}
+                                    disabled={busy || submitting}
+                                    title="Mark as a Pantry Staple (unchecked by default on future recipes)"
+                                    className="rounded-full px-2 py-0.5 text-[11px] font-medium text-stone-400 hover:bg-amber-50 hover:text-amber-800 disabled:opacity-50"
+                                  >
+                                    {busy ? "…" : "+ Staple"}
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
