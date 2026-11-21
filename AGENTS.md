@@ -56,7 +56,7 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 │       ├── api/             # Offline-first API clients (recipes, shoppingLists, pantryStaples, mealPlan, cast)
 │       ├── offline/         # IndexedDB store (store.ts), timeout/circuit-breaker fetch (fetch.ts), & outbox sync (sync.ts)
 │       ├── pages/           # RecipesPage, RecipeDetailPage, MealPlanPage, ShoppingListsPage, CookModePage
-│       ├── components/      # ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
+│       ├── components/      # ModalSheet, ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
 │       │                    # AddMealPlanToShoppingListModal, ManagePantryStaplesModal, CastRecipeModal
 │       └── types/           # recipe.ts, shoppingList.ts, mealPlan.ts (Mon–Sun date utils)
 ├── Caddyfile.dev            # Standalone local HTTPS proxy (:8443, admin off, no :80 redirects)
@@ -122,6 +122,15 @@ Keep new business logic inside `api/services/` rather than bloating Django views
   - Brand button (`Kiln` + inline sync indicator) on the left; tabs named **Recipe**, **Plan**, **List**.
   - Compact action labels (`+ Plan`, `+ List`, `Cast`, icon-only `←` back button, `⋮` overflow menu for `Cook Mode` / `Delete`).
 
+### Mobile-First Requirement (Always Check New UI Features on Phone Widths)
+Kiln is used primarily on vertical phones (360–430px viewports, one-handed touch in the kitchen and grocery store). **Every new feature or UI edit MUST be designed and reviewed for mobile friendliness before wrapping up:**
+- **Zero horizontal overflow at 360px:** Always include `grid-cols-1` on responsive grids (`grid grid-cols-1 md:grid-cols-...`) and `min-w-0` on grid/flex children containing `truncate` or long recipe/ingredient names; use `break-words` or `line-clamp-2` where wrapping is preferred.
+- **Touch targets & gestures:** Interactive buttons, icon triggers, checkboxes, and menu rows should be comfortably tappable (`≥40×40px` preferred, minimum `36px`; use `h-5 w-5` checkboxes wrapped in full-row `<label>`s). Use `pointerdown` (never `mousedown`) for outside-click menu/popover dismissal, and never rely on hover-only `title` tooltips to surface important info.
+- **Modals & drawers:** Use the shared `ModalSheet` component (`web/src/components/ModalSheet.tsx`) for all dialogs and mobile pickers so they render as bottom sheets (`max-h-[92dvh]`) with backdrop tap-to-dismiss, Escape close, body scroll lock, safe-area sticky footers, and `40×40px` close buttons.
+- **Viewport, keyboards & safe areas:** Use `dvh` (`min-h-dvh` / `h-dvh`) instead of `vh`/`h-screen`, include `env(safe-area-inset-bottom)` padding on bottom-pinned bars/footers, use `text-base sm:text-sm` (≥16px on `<sm`) on inputs/selects/textareas to avoid iOS Safari auto-zoom, and gate `autoFocus` on fine pointers (`window.matchMedia("(pointer: fine)").matches`) so phones aren't ambushed by the soft keyboard.
+- **Sticky sub-bars & compact mobile chrome:** Keep above-the-fold headers compact on `<sm` (hide verbose subtitles with `hidden sm:block`, use horizontal pill strips or drawers instead of tall stacked sidebars), and offset sticky sub-bars below the app header via `top-[var(--app-header-h,61px)]`.
+- **Standalone PWA links:** Navigate internal routes with React Router `<Link>` / `useNavigate` (never `target="_blank"`), so users stay inside the installed PWA.
+
 ---
 
 ## 5. Critical Gotchas & Domain Invariants
@@ -164,7 +173,8 @@ Keep new business logic inside `api/services/` rather than bloating Django views
 - Cross-cutting user flows live in `api/test_e2e.py`.
 - All backend tests run offline in an in-memory SQLite DB with zero external network calls (stub `RecipeImporter`, `Caster`, and HTTP openers via `unittest.mock` or `api/testing_utils.py`).
 - Before finishing any change:
-  1. Run `make test` (all Django tests + `tsc --noEmit`).
-  2. Run `npm --prefix web run build` if any frontend files changed.
-  3. Run `make migrate` if any new migration was added.
-  4. Do not commit or push unless the user asks.
+  1. If any UI was added or modified, review it against the **Mobile-First Requirement** checklist above (360–430px portrait layout, no horizontal overflow, `ModalSheet`, touch targets, `pointerdown`, `dvh`/safe areas, anti-zoom inputs).
+  2. Run `make test` (all Django tests + `tsc --noEmit`).
+  3. Run `npm --prefix web run build` if any frontend files changed.
+  4. Run `make migrate` if any new migration was added.
+  5. Do not commit or push unless the user asks.

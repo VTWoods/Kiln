@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+:root {
+  --app-header-h: 61px;
+}
+
+@layer base {
+  button,
+  a,
+  label,
+  select,
+  input,
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

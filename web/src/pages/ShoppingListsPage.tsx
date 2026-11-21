@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ManagePantryStaplesModal from "../components/ManagePantryStaplesModal";
 import {
@@ -51,9 +58,32 @@ export default function ShoppingListsPage() {
   const [groupMode, setGroupMode] = useState<"aisle" | "recipe">("aisle");
   const [showStaplesModal, setShowStaplesModal] = useState(false);
   const [openMenuItemId, setOpenMenuItemId] = useState<number | null>(null);
+  const [listMenuOpen, setListMenuOpen] = useState(false);
+  const listMenuRef = useRef<HTMLDivElement | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(["checked"]),
   );
+
+  useEffect(() => {
+    if (!listMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (
+        listMenuRef.current &&
+        !listMenuRef.current.contains(e.target as Node)
+      ) {
+        setListMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setListMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [listMenuOpen]);
 
   const toggleGroupCollapsed = (groupKey: string) => {
     setCollapsedGroups((prev) => {
@@ -222,7 +252,8 @@ export default function ShoppingListsPage() {
   const handleSelectList = (id: number) => {
     clearAllCheckTimers();
     setOpenMenuItemId(null);
-    setCollapsedGroups(new Set());
+    setListMenuOpen(false);
+    setCollapsedGroups(new Set(["checked"]));
     setSearchParams({ list: String(id) });
     void loadActiveList(id);
   };
@@ -238,6 +269,9 @@ export default function ShoppingListsPage() {
       const created = await createShoppingList(trimmed);
       setLists((prev) => [...prev, created]);
       setActiveList(created);
+      setOpenMenuItemId(null);
+      setListMenuOpen(false);
+      setCollapsedGroups(new Set(["checked"]));
       setNewListName("");
       setShowNewListForm(false);
       setSearchParams({ list: String(created.id) });
@@ -259,10 +293,13 @@ export default function ShoppingListsPage() {
       return;
     }
     setError(null);
+    setListMenuOpen(false);
+    setOpenMenuItemId(null);
     try {
       await deleteShoppingList(list.id);
       const remaining = lists.filter((l) => l.id !== list.id);
       setLists(remaining);
+      setCollapsedGroups(new Set(["checked"]));
       if (remaining.length > 0) {
         setSearchParams({ list: String(remaining[0].id) }, { replace: true });
         void loadActiveList(remaining[0].id);
@@ -371,13 +408,48 @@ export default function ShoppingListsPage() {
 
   const handleDeleteItem = async (item: ShoppingListItem) => {
     if (!activeList) return;
+    const targetListId = activeList.id;
+    const previousActiveList = activeList;
+    const previousLists = lists;
+
     clearItemTimers(item.id);
     setError(null);
+
+    // Optimistically remove item immediately and update list counts
+    setActiveList((prev) => {
+      if (!prev || prev.id !== targetListId || !prev.items) return prev;
+      const nextItems = prev.items.filter((it) => it.id !== item.id);
+      const nextCheckedCount = nextItems.filter((it) => it.checked).length;
+      return {
+        ...prev,
+        items: nextItems,
+        item_count: nextItems.length,
+        checked_count: nextCheckedCount,
+      };
+    });
+    setLists((prev) =>
+      prev.map((l) =>
+        l.id === targetListId
+          ? {
+              ...l,
+              item_count: Math.max(0, l.item_count - 1),
+              checked_count: item.checked
+                ? Math.max(0, l.checked_count - 1)
+                : l.checked_count,
+            }
+          : l,
+      ),
+    );
+
     try {
-      await deleteShoppingListItem(activeList.id, item.id);
-      void loadActiveList(activeList.id);
+      await deleteShoppingListItem(targetListId, item.id);
     } catch (err: unknown) {
+      setActiveList((prev) =>
+        prev?.id === targetListId ? previousActiveList : prev,
+      );
+      setLists(previousLists);
       setError(err instanceof Error ? err.message : "Failed to remove item.");
+      void loadActiveList(targetListId);
     }
   };
 
@@ -541,14 +613,39 @@ export default function ShoppingListsPage() {
     return groups;
   })();
 
+  const activeGroupKeys =
+    groupMode === "aisle"
+      ? groupedUnchecked.map((g) => `aisle:${g.aisle}`)
+      : groupedByRecipe.map((g) => `recipe:${g.key}`);
+  const allGroupsCollapsed =
+    activeGroupKeys.length > 0 &&
+    activeGroupKeys.every((key) => collapsedGroups.has(key));
+
+  const handleToggleCollapseAll = () => {
+    if (activeGroupKeys.length === 0) return;
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (allGroupsCollapsed) {
+        for (const key of activeGroupKeys) {
+          next.delete(key);
+        }
+      } else {
+        for (const key of activeGroupKeys) {
+          next.add(key);
+        }
+      }
+      return next;
+    });
+  };
+
   return (
-    <section className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <section className="space-y-4 sm:space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-stone-900">
             Shopping Lists
           </h1>
-          <p className="mt-1 text-sm text-stone-600">
+          <p className="mt-1 hidden text-sm text-stone-600 sm:block">
             Plan grocery trips and pull ingredients directly from your recipes.
           </p>
         </div>
@@ -557,7 +654,7 @@ export default function ShoppingListsPage() {
           <button
             type="button"
             onClick={() => setShowStaplesModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 shadow-xs transition-colors hover:bg-stone-50"
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 shadow-xs transition-colors hover:bg-stone-50"
           >
             Pantry Staples
           </button>
@@ -566,7 +663,7 @@ export default function ShoppingListsPage() {
             onClick={() =>
               showNewListForm ? setShowNewListForm(false) : openNewListForm()
             }
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700"
           >
             + New List
           </button>
@@ -576,7 +673,7 @@ export default function ShoppingListsPage() {
       {showNewListForm && (
         <form
           onSubmit={handleCreateList}
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-stone-200 bg-white p-4 shadow-xs"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-stone-200 bg-white p-3.5 shadow-xs sm:p-4"
         >
           <input
             type="text"
@@ -586,19 +683,19 @@ export default function ShoppingListsPage() {
             value={newListName}
             onChange={(e) => setNewListName(e.target.value)}
             disabled={creatingList}
-            className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
+            className="w-full min-w-0 rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:w-auto sm:flex-1 sm:text-sm"
           />
           <button
             type="submit"
             disabled={creatingList}
-            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+            className="min-h-[40px] rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
           >
             {creatingList ? "Creating…" : "Create"}
           </button>
           <button
             type="button"
             onClick={() => setShowNewListForm(false)}
-            className="rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+            className="min-h-[40px] rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
           >
             Cancel
           </button>
@@ -614,7 +711,7 @@ export default function ShoppingListsPage() {
       {loadingLists ? (
         <div className="h-48 animate-pulse rounded-2xl border border-stone-200 bg-white" />
       ) : lists.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center">
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-6 text-center sm:p-10">
           <p className="text-base font-medium text-stone-800">
             No shopping lists yet
           </p>
@@ -623,26 +720,64 @@ export default function ShoppingListsPage() {
             <span className="font-medium text-stone-700">+ List</span>{" "}
             to start one automatically.
           </p>
-          <div className="mt-4 flex justify-center gap-2">
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
             <button
               type="button"
               onClick={openNewListForm}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
+              className="inline-flex min-h-[40px] items-center justify-center rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
             >
               Create Shopping List
             </button>
             <Link
               to="/recipes"
-              className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              className="inline-flex min-h-[40px] items-center justify-center rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
             >
               Browse Recipes
             </Link>
           </div>
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-4">
-          {/* List tabs / sidebar */}
-          <aside className="space-y-1.5 md:col-span-1">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-6">
+          {/* Mobile horizontal scrollable list switcher */}
+          <div
+            className="flex min-w-0 gap-2 overflow-x-auto pb-1 md:hidden"
+            role="tablist"
+            aria-label="Shopping lists"
+          >
+            {lists.map((list) => {
+              const isSelected = activeList?.id === list.id;
+              return (
+                <button
+                  key={list.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => handleSelectList(list.id)}
+                  className={[
+                    "inline-flex min-h-[40px] max-w-[14rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-left text-sm transition-colors",
+                    isSelected
+                      ? "bg-amber-100 font-semibold text-amber-950 ring-1 ring-amber-300"
+                      : "bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50",
+                  ].join(" ")}
+                >
+                  <span className="min-w-0 truncate">{list.name}</span>
+                  <span
+                    className={[
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-xs",
+                      isSelected
+                        ? "bg-amber-200/80 text-amber-900"
+                        : "bg-stone-100 text-stone-500",
+                    ].join(" ")}
+                  >
+                    {list.item_count - list.checked_count}/{list.item_count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Desktop list sidebar */}
+          <aside className="hidden min-w-0 space-y-1.5 md:col-span-1 md:block">
             {lists.map((list) => {
               const isSelected = activeList?.id === list.id;
               return (
@@ -651,13 +786,13 @@ export default function ShoppingListsPage() {
                   type="button"
                   onClick={() => handleSelectList(list.id)}
                   className={[
-                    "flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-sm transition-colors",
+                    "flex w-full min-w-0 items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-sm transition-colors",
                     isSelected
                       ? "bg-amber-100 font-semibold text-amber-950"
                       : "bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50",
                   ].join(" ")}
                 >
-                  <span className="truncate">{list.name}</span>
+                  <span className="min-w-0 truncate">{list.name}</span>
                   <span
                     className={[
                       "ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs",
@@ -674,12 +809,12 @@ export default function ShoppingListsPage() {
           </aside>
 
           {/* Active list detail */}
-          <div className="space-y-4 md:col-span-3">
+          <div className="min-w-0 space-y-4 md:col-span-3">
             {activeList && (
-              <div className="rounded-2xl border border-stone-200 bg-white p-3.5 shadow-xs sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 pb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-stone-900">
+              <div className="min-w-0 rounded-2xl border border-stone-200 bg-white p-3.5 shadow-xs sm:p-5">
+                <div className="flex flex-col gap-3 border-b border-stone-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h2 className="break-words text-lg font-semibold text-stone-900">
                       {activeList.name}
                     </h2>
                     <p className="text-xs text-stone-500">
@@ -689,7 +824,7 @@ export default function ShoppingListsPage() {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
                     <div
                       className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-0.5 text-xs"
                       role="group"
@@ -699,7 +834,7 @@ export default function ShoppingListsPage() {
                         type="button"
                         onClick={() => setGroupMode("aisle")}
                         className={[
-                          "rounded-md px-2.5 py-1 font-medium transition-colors",
+                          "min-h-[36px] rounded-md px-3 py-1.5 font-medium transition-colors",
                           groupMode === "aisle"
                             ? "bg-white text-stone-900 shadow-xs"
                             : "text-stone-500 hover:text-stone-700",
@@ -711,7 +846,7 @@ export default function ShoppingListsPage() {
                         type="button"
                         onClick={() => setGroupMode("recipe")}
                         className={[
-                          "rounded-md px-2.5 py-1 font-medium transition-colors",
+                          "min-h-[36px] rounded-md px-3 py-1.5 font-medium transition-colors",
                           groupMode === "recipe"
                             ? "bg-white text-stone-900 shadow-xs"
                             : "text-stone-500 hover:text-stone-700",
@@ -720,62 +855,105 @@ export default function ShoppingListsPage() {
                         By Recipe
                       </button>
                     </div>
-                    {totalCheckedCount > 0 && (
+
+                    <div className="relative shrink-0" ref={listMenuRef}>
                       <button
                         type="button"
-                        onClick={handleClearChecked}
-                        className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                        onClick={() => {
+                          setOpenMenuItemId(null);
+                          setListMenuOpen((prev) => !prev);
+                        }}
+                        aria-haspopup="menu"
+                        aria-expanded={listMenuOpen}
+                        aria-label={`Actions for ${activeList.name}`}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-stone-200 bg-white text-lg font-semibold text-stone-600 transition-colors hover:bg-stone-50 hover:text-stone-900 active:bg-stone-100"
                       >
-                        Clear checked ({totalCheckedCount})
+                        ⋮
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteList(activeList)}
-                      className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-                    >
-                      Delete list
-                    </button>
+
+                      {listMenuOpen && (
+                        <div
+                          role="menu"
+                          className="absolute right-0 z-20 mt-1 w-48 rounded-xl border border-stone-200 bg-white p-1.5 shadow-lg"
+                        >
+                          {activeGroupKeys.length > 0 && (
+                            <>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  handleToggleCollapseAll();
+                                  setListMenuOpen(false);
+                                }}
+                                className="block min-h-[40px] w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-stone-700 hover:bg-stone-50"
+                              >
+                                {allGroupsCollapsed
+                                  ? "Expand all"
+                                  : "Collapse all"}
+                              </button>
+                              <div className="my-1 border-t border-stone-100" />
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setListMenuOpen(false);
+                              void handleDeleteList(activeList);
+                            }}
+                            className="block min-h-[40px] w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Delete list
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Add custom item form */}
                 <form
                   onSubmit={handleAddManualItem}
-                  className="mt-4 flex flex-wrap items-center gap-2"
+                  className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center"
                 >
-                  <input
-                    type="text"
-                    placeholder="Qty"
-                    value={itemQty}
-                    onChange={(e) => setItemQty(e.target.value)}
-                    disabled={addingItem}
-                    className="w-16 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Unit"
-                    value={itemUnit}
-                    onChange={(e) => setItemUnit(e.target.value)}
-                    disabled={addingItem}
-                    className="w-20 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Add an item…"
-                    value={itemName}
-                    onChange={(e) => setItemName(e.target.value)}
-                    disabled={addingItem}
-                    className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addingItem}
-                    className="rounded-lg bg-stone-900 px-3.5 py-1.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
-                  >
-                    Add
-                  </button>
+                  <div className="flex min-w-0 flex-1 items-center gap-2 sm:order-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Add an item…"
+                      value={itemName}
+                      onChange={(e) => setItemName(e.target.value)}
+                      disabled={addingItem}
+                      className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:py-1.5 sm:text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={addingItem}
+                      className="min-h-[40px] shrink-0 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60 sm:min-h-0 sm:px-3.5 sm:py-1.5"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:order-1 sm:flex sm:shrink-0 sm:items-center">
+                    <input
+                      type="text"
+                      placeholder="Qty"
+                      aria-label="Quantity"
+                      value={itemQty}
+                      onChange={(e) => setItemQty(e.target.value)}
+                      disabled={addingItem}
+                      className="w-full min-w-0 rounded-lg border border-stone-300 px-2.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:w-16 sm:py-1.5 sm:text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Unit"
+                      aria-label="Unit"
+                      value={itemUnit}
+                      onChange={(e) => setItemUnit(e.target.value)}
+                      disabled={addingItem}
+                      className="w-full min-w-0 rounded-lg border border-stone-300 px-2.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:w-20 sm:py-1.5 sm:text-sm"
+                    />
+                  </div>
                 </form>
 
                 {/* Items */}
@@ -809,23 +987,23 @@ export default function ShoppingListsPage() {
                             const collapseKey = `aisle:${group.aisle}`;
                             const isCollapsed = collapsedGroups.has(collapseKey);
                             return (
-                              <div key={group.aisle}>
+                              <div key={group.aisle} className="min-w-0">
                                 <button
                                   type="button"
                                   onClick={() =>
                                     toggleGroupCollapsed(collapseKey)
                                   }
                                   aria-expanded={!isCollapsed}
-                                  className="mb-1 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-100/80 px-2.5 py-2 text-left transition-colors hover:bg-stone-200/70"
+                                  className="sticky top-[var(--app-header-h,61px)] z-10 mb-1 flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-100/95 px-2.5 py-2.5 text-left shadow-2xs backdrop-blur-xs transition-colors hover:bg-stone-200/90"
                                 >
-                                  <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
                                     <span
                                       aria-hidden="true"
-                                      className="inline-block w-3.5 text-center text-xs text-stone-400"
+                                      className="inline-block w-3.5 shrink-0 text-center text-xs text-stone-400"
                                     >
                                       {isCollapsed ? "▸" : "▾"}
                                     </span>
-                                    <span className="truncate text-xs font-semibold tracking-wide text-stone-700 uppercase">
+                                    <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-stone-700 uppercase">
                                       {group.aisle}
                                     </span>
                                   </span>
@@ -845,11 +1023,12 @@ export default function ShoppingListsPage() {
                                         )}
                                         fadingOut={fadingCheckIds.has(item.id)}
                                         menuOpen={openMenuItemId === item.id}
-                                        onToggleMenu={() =>
+                                        onToggleMenu={() => {
+                                          setListMenuOpen(false);
                                           setOpenMenuItemId((prev) =>
                                             prev === item.id ? null : item.id,
-                                          )
-                                        }
+                                          );
+                                        }}
                                         onCloseMenu={() =>
                                           setOpenMenuItemId(null)
                                         }
@@ -870,15 +1049,16 @@ export default function ShoppingListsPage() {
                             const collapseKey = `recipe:${group.key}`;
                             const isCollapsed = collapsedGroups.has(collapseKey);
                             return (
-                              <div key={group.key}>
-                                <div className="mb-1 flex items-center justify-between gap-2 rounded-lg bg-stone-100/80 transition-colors hover:bg-stone-200/70">
+                              <div key={group.key} className="min-w-0">
+                                <div className="sticky top-[var(--app-header-h,61px)] z-10 mb-1 flex min-w-0 items-center justify-between gap-1.5 rounded-lg bg-stone-100/95 shadow-2xs backdrop-blur-xs transition-colors hover:bg-stone-200/90">
                                   <button
                                     type="button"
                                     onClick={() =>
                                       toggleGroupCollapsed(collapseKey)
                                     }
                                     aria-expanded={!isCollapsed}
-                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2.5 py-2 text-left"
+                                    title={group.label}
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2.5 py-2.5 text-left"
                                   >
                                     <span
                                       aria-hidden="true"
@@ -888,22 +1068,22 @@ export default function ShoppingListsPage() {
                                     </span>
                                     <span
                                       className={[
-                                        "truncate text-xs font-semibold tracking-wide uppercase",
+                                        "min-w-0 truncate text-xs font-semibold",
                                         group.recipeId
                                           ? "text-amber-900"
-                                          : "text-stone-700",
+                                          : "tracking-wide text-stone-700 uppercase",
                                       ].join(" ")}
                                     >
                                       {group.label}
                                     </span>
                                   </button>
-                                  <div className="flex shrink-0 items-center gap-1.5 pr-2.5">
+                                  <div className="flex shrink-0 items-center gap-1 pr-2">
                                     {group.recipeId && (
                                       <Link
                                         to={`/recipes/${group.recipeId}`}
                                         title={`Open ${group.label}`}
                                         aria-label={`Open ${group.label}`}
-                                        className="rounded px-1.5 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100"
                                       >
                                         ↗
                                       </Link>
@@ -927,11 +1107,12 @@ export default function ShoppingListsPage() {
                                         )}
                                         fadingOut={fadingCheckIds.has(item.id)}
                                         menuOpen={openMenuItemId === item.id}
-                                        onToggleMenu={() =>
+                                        onToggleMenu={() => {
+                                          setListMenuOpen(false);
                                           setOpenMenuItemId((prev) =>
                                             prev === item.id ? null : item.id,
-                                          )
-                                        }
+                                          );
+                                        }}
                                         onCloseMenu={() =>
                                           setOpenMenuItemId(null)
                                         }
@@ -952,25 +1133,34 @@ export default function ShoppingListsPage() {
                       const checkedCollapsed = collapsedGroups.has("checked");
                       return (
                         <div className="border-t border-stone-100 pt-3">
-                          <button
-                            type="button"
-                            onClick={() => toggleGroupCollapsed("checked")}
-                            aria-expanded={!checkedCollapsed}
-                            className="mb-1.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-50 px-2.5 py-2 text-left transition-colors hover:bg-stone-100"
-                          >
-                            <span className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-stone-400 uppercase">
+                          <div className="mb-1.5 flex items-center justify-between gap-2 rounded-lg bg-stone-50">
+                            <button
+                              type="button"
+                              onClick={() => toggleGroupCollapsed("checked")}
+                              aria-expanded={!checkedCollapsed}
+                              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-stone-100"
+                            >
                               <span
                                 aria-hidden="true"
-                                className="inline-block w-3.5 text-center"
+                                className="inline-block w-3.5 shrink-0 text-center text-xs text-stone-400"
                               >
                                 {checkedCollapsed ? "▸" : "▾"}
                               </span>
-                              Checked off
-                            </span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-stone-400">
-                              {checkedItems.length}
-                            </span>
-                          </button>
+                              <span className="truncate text-xs font-medium tracking-wide text-stone-500 uppercase">
+                                Checked off
+                              </span>
+                              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-stone-400">
+                                {checkedItems.length}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleClearChecked}
+                              className="mr-1.5 min-h-[36px] shrink-0 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900"
+                            >
+                              Clear checked
+                            </button>
+                          </div>
                           {!checkedCollapsed && (
                             <ul className="divide-y divide-stone-100">
                               {checkedItems.map((item) => (
@@ -978,12 +1168,14 @@ export default function ShoppingListsPage() {
                                   key={item.id}
                                   item={item}
                                   aisles={availableAisles}
+                                  showRecipeChips={false}
                                   menuOpen={openMenuItemId === item.id}
-                                  onToggleMenu={() =>
+                                  onToggleMenu={() => {
+                                    setListMenuOpen(false);
                                     setOpenMenuItemId((prev) =>
                                       prev === item.id ? null : item.id,
-                                    )
-                                  }
+                                    );
+                                  }}
                                   onCloseMenu={() => setOpenMenuItemId(null)}
                                   onToggle={handleToggleItem}
                                   onDelete={handleDeleteItem}
@@ -1037,6 +1229,7 @@ function ShoppingListItemRow({
   onChangeAisle: (item: ShoppingListItem, aisle: string) => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [openUpward, setOpenUpward] = useState(false);
   const amount = [item.quantity, item.unit].filter(Boolean).join(" ");
   const currentAisle = item.aisle || "Other";
   const isSettledChecked = item.checked && !pendingCheck;
@@ -1048,9 +1241,18 @@ function ShoppingListItemRow({
         ? [{ id: item.recipe_id, title: item.recipe_title }]
         : [];
 
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const estimatedMenuHeight = item.checked ? 72 : 176;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setOpenUpward(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow);
+  }, [menuOpen, item.checked]);
+
   useEffect(() => {
     if (!menuOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onCloseMenu();
       }
@@ -1058,10 +1260,10 @@ function ShoppingListItemRow({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCloseMenu();
     };
-    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [menuOpen, onCloseMenu]);
@@ -1069,7 +1271,8 @@ function ShoppingListItemRow({
   return (
     <li
       className={[
-        "flex items-start justify-between gap-2 py-3 transition-all duration-500",
+        "flex min-w-0 items-start justify-between gap-1 transition-all duration-500",
+        menuOpen ? "relative z-20" : "",
         fadingOut
           ? "scale-[0.98] opacity-0"
           : pendingCheck
@@ -1077,20 +1280,19 @@ function ShoppingListItemRow({
             : "opacity-100",
       ].join(" ")}
     >
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <input
-          id={`shopping-item-${item.id}`}
-          type="checkbox"
-          checked={item.checked}
-          onChange={() => onToggle(item)}
-          className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
-        />
+      <div className="min-w-0 flex-1">
+        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 py-3 active:bg-stone-50">
+          <input
+            id={`shopping-item-${item.id}`}
+            type="checkbox"
+            checked={item.checked}
+            onChange={() => onToggle(item)}
+            className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
+          />
 
-        <div className="min-w-0 flex-1">
-          <label
-            htmlFor={`shopping-item-${item.id}`}
+          <span
             className={[
-              "block cursor-pointer text-[15px] leading-snug break-words transition-colors duration-300 sm:text-sm",
+              "min-w-0 flex-1 text-[15px] leading-snug break-words transition-colors duration-300 sm:text-sm",
               isSettledChecked
                 ? "text-stone-400 line-through"
                 : pendingCheck
@@ -1109,50 +1311,51 @@ function ShoppingListItemRow({
               </span>
             )}
             {item.name}
-          </label>
+          </span>
+        </label>
 
-          {((showRecipeChips && recipeChips.length > 0) || showAisleChip) && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              {showAisleChip && (
-                <span
+        {((showRecipeChips && recipeChips.length > 0) || showAisleChip) && (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-3 pl-8">
+            {showAisleChip && (
+              <span
+                className={[
+                  "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  isGrayed
+                    ? "bg-stone-100 text-stone-400"
+                    : "bg-stone-100 text-stone-600",
+                ].join(" ")}
+              >
+                {currentAisle}
+              </span>
+            )}
+            {showRecipeChips &&
+              recipeChips.map((recipe) => (
+                <Link
+                  key={recipe.id}
+                  to={`/recipes/${recipe.id}`}
+                  title={recipe.title}
                   className={[
-                    "inline-block rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    "block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors sm:max-w-xs",
                     isGrayed
-                      ? "bg-stone-100 text-stone-400"
-                      : "bg-stone-100 text-stone-600",
+                      ? "bg-stone-100 text-stone-400 hover:bg-stone-200"
+                      : "bg-amber-50 text-amber-800 hover:bg-amber-100",
                   ].join(" ")}
                 >
-                  {currentAisle}
-                </span>
-              )}
-              {showRecipeChips &&
-                recipeChips.map((recipe) => (
-                  <Link
-                    key={recipe.id}
-                    to={`/recipes/${recipe.id}`}
-                    className={[
-                      "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors",
-                      isGrayed
-                        ? "bg-stone-100 text-stone-400 hover:bg-stone-200"
-                        : "bg-amber-50 text-amber-800 hover:bg-amber-100",
-                    ].join(" ")}
-                  >
-                    {recipe.title}
-                  </Link>
-                ))}
-            </div>
-          )}
-        </div>
+                  {recipe.title}
+                </Link>
+              ))}
+          </div>
+        )}
       </div>
 
-      <div className="relative shrink-0" ref={menuRef}>
+      <div className="relative shrink-0 pt-1" ref={menuRef}>
         <button
           type="button"
           onClick={onToggleMenu}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-label={`Actions for ${item.name}`}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-base font-semibold text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700"
+          className="-mr-1.5 inline-flex h-10 w-10 items-center justify-center rounded-lg text-lg font-semibold text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 active:bg-stone-100"
         >
           ⋮
         </button>
@@ -1160,7 +1363,10 @@ function ShoppingListItemRow({
         {menuOpen && (
           <div
             role="menu"
-            className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-stone-200 bg-white p-2 shadow-lg"
+            className={[
+              "absolute right-0 z-20 w-56 rounded-xl border border-stone-200 bg-white p-2 shadow-lg",
+              openUpward ? "bottom-full mb-1" : "top-full mt-1",
+            ].join(" ")}
           >
             {!item.checked && (
               <div className="border-b border-stone-100 pb-2">
@@ -1177,7 +1383,7 @@ function ShoppingListItemRow({
                     onChangeAisle(item, e.target.value);
                     onCloseMenu();
                   }}
-                  className="w-full cursor-pointer rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-800 focus:border-amber-500 focus:bg-white focus:outline-none"
+                  className="w-full cursor-pointer rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 text-base font-medium text-stone-800 focus:border-amber-500 focus:bg-white focus:outline-none sm:py-1.5 sm:text-xs"
                 >
                   {aisles.map((aisle) => (
                     <option key={aisle} value={aisle}>
@@ -1196,7 +1402,7 @@ function ShoppingListItemRow({
                 onDelete(item);
               }}
               className={[
-                "block w-full rounded-lg px-2.5 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-50",
+                "block min-h-[40px] w-full rounded-lg px-2.5 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50 sm:min-h-0 sm:py-2 sm:text-xs",
                 !item.checked ? "mt-1" : "",
               ].join(" ")}
             >

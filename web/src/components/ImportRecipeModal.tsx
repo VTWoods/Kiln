@@ -7,6 +7,7 @@ import {
   type IngredientInput,
   type Recipe,
 } from "../types/recipe";
+import ModalSheet from "./ModalSheet";
 
 type Props = {
   initialPreview?: ImportedRecipe | null;
@@ -110,6 +111,13 @@ export default function ImportRecipeModal({
       : [],
   );
 
+  const [isFinePointer] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: fine)").matches,
+  );
+
   const bookmarkletCode = buildBookmarkletCode(bookmarkletOrigin);
 
   useEffect(() => {
@@ -118,16 +126,6 @@ export default function ImportRecipeModal({
       el.setAttribute("href", bookmarkletCode);
     }
   }, [bookmarkletCode, sourceMode, step]);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !fetching && !saving) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fetching, saving, onClose]);
 
   const applyPreview = (preview: ImportedRecipe) => {
     setTitle(preview.title || "");
@@ -284,594 +282,584 @@ export default function ImportRecipeModal({
 
   const tabClass = (mode: SourceMode) =>
     [
-      "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+      "min-h-[40px] flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:flex-initial sm:min-h-[36px]",
       sourceMode === mode
         ? "bg-amber-100 text-amber-900"
         : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
     ].join(" ");
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-xs"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="import-modal-title"
-    >
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-stone-200">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-stone-200 px-6 py-4">
-          <div>
-            <h2
-              id="import-modal-title"
-              className="text-lg font-semibold text-stone-900"
-            >
-              {step === "source"
-                ? "Import Recipe"
-                : "Preview & Confirm Recipe"}
-            </h2>
-            <p className="text-xs text-stone-500">
-              {step === "source"
-                ? "Import by URL, paste HTML for sites that block bots, or use the browser bookmarklet."
-                : "Pick a photo and review the extracted details before saving."}
-            </p>
-          </div>
+  const modalTitle =
+    step === "source" ? "Import Recipe" : "Preview & Confirm Recipe";
+  const modalSubtitle =
+    step === "source"
+      ? "Import by URL, paste HTML for sites that block bots, or use the browser bookmarklet."
+      : "Pick a photo and review the extracted details before saving.";
+
+  const formSubmit =
+    step === "preview"
+      ? handleSave
+      : sourceMode === "bookmarklet"
+        ? undefined
+        : handleFetch;
+
+  const modalFooter =
+    step === "source" ? (
+      sourceMode === "bookmarklet" ? (
+        <div className="flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            disabled={fetching || saving}
-            className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 disabled:opacity-50"
-            aria-label="Close"
+            className="min-h-[40px] w-full rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 sm:w-auto"
           >
-            ✕
+            Done
           </button>
         </div>
-
-        {/* Body */}
-        {step === "source" ? (
-          <div className="space-y-4 overflow-y-auto p-6">
-            {/* Mode Tabs */}
-            <div className="flex items-center gap-1 border-b border-stone-200 pb-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setSourceMode("url");
-                  setError(null);
-                  setWasBlocked(false);
-                }}
-                className={tabClass("url")}
-              >
-                From URL
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSourceMode("html");
-                  setError(null);
-                  setWasBlocked(false);
-                }}
-                className={tabClass("html")}
-              >
-                Paste HTML
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSourceMode("bookmarklet");
-                  setError(null);
-                  setWasBlocked(false);
-                }}
-                className={tabClass("bookmarklet")}
-              >
-                Bookmarklet
-              </button>
-            </div>
-
-            {sourceMode === "bookmarklet" ? (
-              <div className="space-y-4">
-                <p className="text-sm text-stone-600">
-                  Drag the button below onto your browser&apos;s bookmarks bar.
-                  Whenever you&apos;re viewing any recipe (including sites behind
-                  Cloudflare or a login), click{" "}
-                  <strong className="text-stone-900">Save to Kiln</strong> to
-                  send the page straight to this preview window.
-                </p>
-
-                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-                  <a
-                    ref={bookmarkletLinkRef}
-                    href="#save-to-kiln"
-                    onClick={(e) => e.preventDefault()}
-                    draggable
-                    className="inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-amber-700 active:cursor-grabbing"
-                    title="Drag this button to your bookmarks bar"
-                  >
-                    Save to Kiln
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyBookmarklet()}
-                    className="rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 hover:bg-stone-50"
-                  >
-                    {copiedBookmarklet ? "Copied!" : "Copy Bookmarklet URL"}
-                  </button>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="bookmarklet-origin"
-                    className="block text-xs font-medium text-stone-600"
-                  >
-                    Kiln Server Address (used by the bookmarklet)
-                  </label>
-                  <input
-                    id="bookmarklet-origin"
-                    type="url"
-                    value={bookmarkletOrigin}
-                    onChange={(e) => setBookmarkletOrigin(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-
-                {error && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
-                    {error}
-                  </div>
-                )}
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
+      ) : (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={fetching}
+            className="min-h-[40px] flex-1 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 sm:flex-initial"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={fetching}
+            className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60 sm:flex-initial"
+          >
+            {fetching ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                {sourceMode === "html" ? "Parsing HTML…" : "Fetching recipe…"}
+              </>
+            ) : sourceMode === "html" ? (
+              "Parse HTML Preview"
             ) : (
-              <form onSubmit={handleFetch} className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="recipe-url"
-                    className="block text-sm font-medium text-stone-700"
-                  >
-                    Recipe URL
-                  </label>
-                  <input
-                    id="recipe-url"
-                    type="url"
-                    required
-                    autoFocus
-                    placeholder="https://www.seriouseats.com/perfect-pot-roast-recipe-pioneer-woman"
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                    disabled={fetching}
-                    className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50"
-                  />
-                </div>
-
-                {sourceMode === "html" && (
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <label
-                        htmlFor="recipe-html"
-                        className="block text-sm font-medium text-stone-700"
-                      >
-                        Page HTML
-                      </label>
-                      <span className="text-xs text-stone-500">
-                        In your browser: View Source (Ctrl+U / ⌘⌥U) → Select All
-                        → Copy
-                      </span>
-                    </div>
-                    <textarea
-                      id="recipe-html"
-                      required
-                      rows={6}
-                      placeholder="<!doctype html>..."
-                      value={htmlInput}
-                      onChange={(e) => setHtmlInput(e.target.value)}
-                      disabled={fetching}
-                      className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2 font-mono text-xs text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50"
-                    />
-                  </div>
-                )}
-
-                {error && (
-                  <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
-                    <p>{error}</p>
-                    {wasBlocked && sourceMode === "url" && (
-                      <div className="flex flex-wrap gap-2 pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSourceMode("html");
-                            setError(null);
-                            setWasBlocked(false);
-                          }}
-                          className="rounded-md bg-red-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-800"
-                        >
-                          Switch to Paste HTML →
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSourceMode("bookmarklet");
-                            setError(null);
-                            setWasBlocked(false);
-                          }}
-                          className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100"
-                        >
-                          Use Bookmarklet →
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    disabled={fetching}
-                    className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={fetching}
-                    className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60"
-                  >
-                    {fetching ? (
-                      <>
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                        {sourceMode === "html"
-                          ? "Parsing HTML…"
-                          : "Fetching recipe…"}
-                      </>
-                    ) : sourceMode === "html" ? (
-                      "Parse HTML Preview"
-                    ) : (
-                      "Fetch Preview"
-                    )}
-                  </button>
-                </div>
-              </form>
+              "Fetch Preview"
             )}
+          </button>
+        </div>
+      )
+    ) : (
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setStep("source");
+          }}
+          disabled={saving}
+          className="inline-flex min-h-[40px] items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50 sm:justify-start sm:px-2"
+        >
+          ← Change Source
+        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="min-h-[40px] flex-1 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 sm:flex-initial"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60 sm:flex-initial"
+          >
+            {saving ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                {selectedImage ? "Saving & caching photo…" : "Saving recipe…"}
+              </>
+            ) : (
+              "Save Recipe"
+            )}
+          </button>
+        </div>
+      </div>
+    );
+
+  return (
+    <ModalSheet
+      onClose={onClose}
+      title={modalTitle}
+      subtitle={modalSubtitle}
+      footer={modalFooter}
+      maxWidthClass="sm:max-w-3xl"
+      closeDisabled={fetching || saving}
+      onSubmit={formSubmit}
+    >
+      {step === "source" ? (
+        <div className="space-y-4">
+          {/* Mode Tabs */}
+          <div className="flex items-center gap-1 border-b border-stone-200 pb-3">
+            <button
+              type="button"
+              onClick={() => {
+                setSourceMode("url");
+                setError(null);
+                setWasBlocked(false);
+              }}
+              className={tabClass("url")}
+            >
+              From URL
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSourceMode("html");
+                setError(null);
+                setWasBlocked(false);
+              }}
+              className={tabClass("html")}
+            >
+              Paste HTML
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSourceMode("bookmarklet");
+                setError(null);
+                setWasBlocked(false);
+              }}
+              className={tabClass("bookmarklet")}
+            >
+              Bookmarklet
+            </button>
           </div>
-        ) : (
-          <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1 space-y-6 overflow-y-auto p-6">
+
+          {sourceMode === "bookmarklet" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-stone-600">
+                Drag the button below onto your browser&apos;s bookmarks bar.
+                Whenever you&apos;re viewing any recipe (including sites behind
+                Cloudflare or a login), click{" "}
+                <strong className="text-stone-900">Save to Kiln</strong> to send
+                the page straight to this preview window.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                <a
+                  ref={bookmarkletLinkRef}
+                  href="#save-to-kiln"
+                  onClick={(e) => e.preventDefault()}
+                  draggable
+                  className="inline-flex min-h-[40px] cursor-grab items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-amber-700 active:cursor-grabbing"
+                  title="Drag this button to your bookmarks bar"
+                >
+                  Save to Kiln
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyBookmarklet()}
+                  className="min-h-[40px] rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                >
+                  {copiedBookmarklet ? "Copied!" : "Copy Bookmarklet URL"}
+                </button>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="bookmarklet-origin"
+                  className="block text-xs font-medium text-stone-600"
+                >
+                  Kiln Server Address (used by the bookmarklet)
+                </label>
+                <input
+                  id="bookmarklet-origin"
+                  type="url"
+                  value={bookmarkletOrigin}
+                  onChange={(e) => setBookmarkletOrigin(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:outline-none sm:py-1.5 sm:text-sm"
+                />
+              </div>
+
               {error && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
                   {error}
                 </div>
               )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="recipe-url"
+                  className="block text-sm font-medium text-stone-700"
+                >
+                  Recipe URL
+                </label>
+                <input
+                  id="recipe-url"
+                  type="url"
+                  required
+                  autoFocus={isFinePointer}
+                  placeholder="https://www.seriouseats.com/perfect-pot-roast-recipe-pioneer-woman"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  disabled={fetching}
+                  className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2.5 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50 sm:text-sm"
+                />
+              </div>
 
-              {/* Source URL */}
-              {sourceUrl && isSafeHttpUrl(sourceUrl) && (
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-stone-50 px-3.5 py-2 text-xs text-stone-600 ring-1 ring-stone-200">
-                  <span className="truncate">
-                    Source:{" "}
-                    <span className="font-medium text-stone-800">
-                      {formatHostname(sourceUrl)}
+              {sourceMode === "html" && (
+                <div>
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                    <label
+                      htmlFor="recipe-html"
+                      className="block text-sm font-medium text-stone-700"
+                    >
+                      Page HTML
+                    </label>
+                    <span className="text-xs text-stone-500">
+                      In your browser: View Source (Ctrl+U / ⌘⌥U) → Select All →
+                      Copy
                     </span>
-                  </span>
-                  <a
-                    href={sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 font-medium text-amber-700 hover:text-amber-800 hover:underline"
-                  >
-                    Open Original ↗
-                  </a>
+                  </div>
+                  <textarea
+                    id="recipe-html"
+                    required
+                    rows={6}
+                    placeholder="<!doctype html>..."
+                    value={htmlInput}
+                    onChange={(e) => setHtmlInput(e.target.value)}
+                    disabled={fetching}
+                    className="mt-1.5 w-full rounded-lg border border-stone-300 px-3.5 py-2 font-mono text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50 sm:text-xs"
+                  />
                 </div>
               )}
 
-              {/* Photo Picker */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-stone-800">
-                    Recipe Photo
-                  </label>
-                  <span className="text-xs text-stone-500">
-                    Selected photo will be saved locally
-                  </span>
-                </div>
-
-                {selectedImage ? (
-                  <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100">
-                    <img
-                      src={selectedImage}
-                      alt={title || "Selected recipe preview"}
-                      referrerPolicy="no-referrer"
-                      onError={() => markImageFailed(selectedImage)}
-                      className="h-52 w-full object-cover"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-sm text-stone-500">
-                    No photo selected
-                  </div>
-                )}
-
-                {visibleCandidates.length > 0 && (
-                  <div>
-                    <p className="mb-2 text-xs font-medium text-stone-600">
-                      Choose from {visibleCandidates.length} image
-                      {visibleCandidates.length === 1 ? "" : "s"} found on the
-                      page:
-                    </p>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {visibleCandidates.map((imgUrl) => {
-                        const active = selectedImage === imgUrl;
-                        return (
-                          <button
-                            key={imgUrl}
-                            type="button"
-                            onClick={() => setSelectedImage(imgUrl)}
-                            className={[
-                              "relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all",
-                              active
-                                ? "border-amber-600 ring-2 ring-amber-200"
-                                : "border-stone-200 opacity-80 hover:opacity-100",
-                            ].join(" ")}
-                            title="Use this photo"
-                          >
-                            <img
-                              src={imgUrl}
-                              alt="Candidate recipe photo"
-                              referrerPolicy="no-referrer"
-                              onError={() => markImageFailed(imgUrl)}
-                              className="h-full w-full object-cover"
-                            />
-                          </button>
-                        );
-                      })}
+              {error && (
+                <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+                  <p>{error}</p>
+                  {wasBlocked && sourceMode === "url" && (
+                    <div className="flex flex-wrap gap-2 pt-0.5">
                       <button
                         type="button"
-                        onClick={() => setSelectedImage("")}
-                        className={[
-                          "flex h-16 w-20 shrink-0 items-center justify-center rounded-lg border-2 text-xs font-medium transition-all",
-                          selectedImage === ""
-                            ? "border-amber-600 bg-amber-50 text-amber-900"
-                            : "border-dashed border-stone-300 text-stone-500 hover:bg-stone-50",
-                        ].join(" ")}
+                        onClick={() => {
+                          setSourceMode("html");
+                          setError(null);
+                          setWasBlocked(false);
+                        }}
+                        className="min-h-[36px] rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
                       >
-                        No photo
+                        Switch to Paste HTML →
                       </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Title & Description */}
-              <div className="space-y-3">
-                <div>
-                  <label
-                    htmlFor="preview-title"
-                    className="block text-sm font-medium text-stone-700"
-                  >
-                    Title
-                  </label>
-                  <input
-                    id="preview-title"
-                    type="text"
-                    required
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="preview-description"
-                    className="block text-sm font-medium text-stone-700"
-                  >
-                    Description
-                  </label>
-                  <textarea
-                    id="preview-description"
-                    rows={2}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Servings & Times */}
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label
-                    htmlFor="preview-servings"
-                    className="block text-xs font-medium text-stone-700"
-                  >
-                    Servings
-                  </label>
-                  <input
-                    id="preview-servings"
-                    type="number"
-                    min={1}
-                    value={servings}
-                    onChange={(e) =>
-                      setServings(Math.max(1, Number(e.target.value) || 1))
-                    }
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="preview-prep"
-                    className="block text-xs font-medium text-stone-700"
-                  >
-                    Prep (min)
-                  </label>
-                  <input
-                    id="preview-prep"
-                    type="number"
-                    min={0}
-                    value={prepMinutes}
-                    onChange={(e) =>
-                      setPrepMinutes(Math.max(0, Number(e.target.value) || 0))
-                    }
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="preview-cook"
-                    className="block text-xs font-medium text-stone-700"
-                  >
-                    Cook (min)
-                  </label>
-                  <input
-                    id="preview-cook"
-                    type="number"
-                    min={0}
-                    value={cookMinutes}
-                    onChange={(e) =>
-                      setCookMinutes(Math.max(0, Number(e.target.value) || 0))
-                    }
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-1.5 text-sm text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Ingredients */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-stone-800">
-                    Ingredients ({ingredients.filter((i) => i.name.trim()).length})
-                  </label>
-                  <button
-                    type="button"
-                    onClick={addIngredient}
-                    className="text-xs font-medium text-amber-700 hover:text-amber-800"
-                  >
-                    + Add ingredient
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {ingredients.map((ing, idx) => (
-                    <div
-                      key={idx}
-                      className="flex flex-wrap items-center gap-2 sm:flex-nowrap"
-                      title={ing.raw ? `Original: ${ing.raw}` : undefined}
-                    >
-                      <input
-                        type="text"
-                        placeholder="Qty"
-                        value={ing.quantity}
-                        onChange={(e) =>
-                          updateIngredient(idx, "quantity", e.target.value)
-                        }
-                        className="w-16 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Unit"
-                        value={ing.unit}
-                        onChange={(e) =>
-                          updateIngredient(idx, "unit", e.target.value)
-                        }
-                        className="w-28 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Ingredient"
-                        value={ing.name}
-                        onChange={(e) =>
-                          updateIngredient(idx, "name", e.target.value)
-                        }
-                        className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Prep / notes"
-                        value={ing.preparation || ""}
-                        onChange={(e) =>
-                          updateIngredient(idx, "preparation", e.target.value)
-                        }
-                        className="w-full rounded-lg border border-stone-200 bg-stone-50/70 px-2.5 py-1.5 text-sm text-stone-700 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white focus:outline-none sm:w-44"
-                      />
                       <button
                         type="button"
-                        onClick={() => removeIngredient(idx)}
-                        className="rounded-md px-2 py-1 text-stone-400 hover:bg-stone-100 hover:text-red-600"
-                        aria-label="Remove ingredient"
+                        onClick={() => {
+                          setSourceMode("bookmarklet");
+                          setError(null);
+                          setWasBlocked(false);
+                        }}
+                        className="min-h-[36px] rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
                       >
-                        ✕
+                        Use Bookmarklet →
                       </button>
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+              {error}
+            </div>
+          )}
 
-              {/* Instructions */}
-              <div>
-                <label
-                  htmlFor="preview-instructions"
-                  className="block text-sm font-medium text-stone-700"
-                >
-                  Instructions
-                </label>
-                <textarea
-                  id="preview-instructions"
-                  rows={6}
-                  value={instructions}
-                  onChange={(e) => setInstructions(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm leading-relaxed text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none"
+          {/* Source URL */}
+          {sourceUrl && isSafeHttpUrl(sourceUrl) && (
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-stone-50 px-3.5 py-2 text-xs text-stone-600 ring-1 ring-stone-200">
+              <span className="truncate">
+                Source:{" "}
+                <span className="font-medium text-stone-800">
+                  {formatHostname(sourceUrl)}
+                </span>
+              </span>
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 py-1 font-medium text-amber-700 hover:text-amber-800 hover:underline"
+              >
+                Open Original ↗
+              </a>
+            </div>
+          )}
+
+          {/* Photo Picker */}
+          <div className="space-y-3">
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
+              <label className="text-sm font-medium text-stone-800">
+                Recipe Photo
+              </label>
+              <span className="text-xs text-stone-500">
+                Selected photo will be saved locally
+              </span>
+            </div>
+
+            {selectedImage ? (
+              <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100">
+                <img
+                  src={selectedImage}
+                  alt={title || "Selected recipe preview"}
+                  referrerPolicy="no-referrer"
+                  onError={() => markImageFailed(selectedImage)}
+                  className="h-44 w-full object-cover sm:h-52"
                 />
               </div>
+            ) : (
+              <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-sm text-stone-500">
+                No photo selected
+              </div>
+            )}
+
+            {visibleCandidates.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-stone-600">
+                  Choose from {visibleCandidates.length} image
+                  {visibleCandidates.length === 1 ? "" : "s"} found on the page:
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {visibleCandidates.map((imgUrl) => {
+                    const active = selectedImage === imgUrl;
+                    return (
+                      <button
+                        key={imgUrl}
+                        type="button"
+                        onClick={() => setSelectedImage(imgUrl)}
+                        className={[
+                          "relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all",
+                          active
+                            ? "border-amber-600 ring-2 ring-amber-200"
+                            : "border-stone-200 opacity-80 hover:opacity-100",
+                        ].join(" ")}
+                        title="Use this photo"
+                      >
+                        <img
+                          src={imgUrl}
+                          alt="Candidate recipe photo"
+                          referrerPolicy="no-referrer"
+                          onError={() => markImageFailed(imgUrl)}
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImage("")}
+                    className={[
+                      "flex h-16 w-20 shrink-0 items-center justify-center rounded-lg border-2 text-xs font-medium transition-all",
+                      selectedImage === ""
+                        ? "border-amber-600 bg-amber-50 text-amber-900"
+                        : "border-dashed border-stone-300 text-stone-500 hover:bg-stone-50",
+                    ].join(" ")}
+                  >
+                    No photo
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Title & Description */}
+          <div className="space-y-3">
+            <div>
+              <label
+                htmlFor="preview-title"
+                className="block text-sm font-medium text-stone-700"
+              >
+                Title
+              </label>
+              <input
+                id="preview-title"
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:text-sm"
+              />
             </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between border-t border-stone-200 bg-stone-50 px-6 py-3.5">
+            <div>
+              <label
+                htmlFor="preview-description"
+                className="block text-sm font-medium text-stone-700"
+              >
+                Description
+              </label>
+              <textarea
+                id="preview-description"
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Servings & Times */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label
+                htmlFor="preview-servings"
+                className="block text-xs font-medium text-stone-700"
+              >
+                Servings
+              </label>
+              <input
+                id="preview-servings"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={servings}
+                onChange={(e) =>
+                  setServings(Math.max(1, Number(e.target.value) || 1))
+                }
+                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:py-1.5 sm:text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="preview-prep"
+                className="block text-xs font-medium text-stone-700"
+              >
+                Prep (min)
+              </label>
+              <input
+                id="preview-prep"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={prepMinutes}
+                onChange={(e) =>
+                  setPrepMinutes(Math.max(0, Number(e.target.value) || 0))
+                }
+                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:py-1.5 sm:text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="preview-cook"
+                className="block text-xs font-medium text-stone-700"
+              >
+                Cook (min)
+              </label>
+              <input
+                id="preview-cook"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={cookMinutes}
+                onChange={(e) =>
+                  setCookMinutes(Math.max(0, Number(e.target.value) || 0))
+                }
+                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:py-1.5 sm:text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Ingredients */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-sm font-medium text-stone-800">
+                Ingredients ({ingredients.filter((i) => i.name.trim()).length})
+              </label>
               <button
                 type="button"
-                onClick={() => {
-                  setError(null);
-                  setStep("source");
-                }}
-                disabled={saving}
-                className="text-sm font-medium text-stone-600 hover:text-stone-900 disabled:opacity-50"
+                onClick={addIngredient}
+                className="min-h-[36px] rounded-lg px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 hover:text-amber-800"
               >
-                ← Change Source
+                + Add ingredient
               </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  disabled={saving}
-                  className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60"
-                >
-                  {saving ? (
-                    <>
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                      {selectedImage
-                        ? "Saving & caching photo…"
-                        : "Saving recipe…"}
-                    </>
-                  ) : (
-                    "Save Recipe"
-                  )}
-                </button>
-              </div>
             </div>
-          </form>
-        )}
-      </div>
-    </div>
+
+            <div className="space-y-2.5 sm:space-y-2">
+              {ingredients.map((ing, idx) => (
+                <div
+                  key={idx}
+                  className="grid grid-cols-[5rem_1fr_2.5rem] items-center gap-2 rounded-xl border border-stone-200 bg-stone-50/50 p-2.5 sm:flex sm:flex-nowrap sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0"
+                  title={ing.raw ? `Original: ${ing.raw}` : undefined}
+                >
+                  <input
+                    type="text"
+                    placeholder="Qty"
+                    aria-label="Quantity"
+                    value={ing.quantity}
+                    onChange={(e) =>
+                      updateIngredient(idx, "quantity", e.target.value)
+                    }
+                    className="order-3 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:order-1 sm:w-16 sm:py-1.5 sm:text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Unit"
+                    aria-label="Unit"
+                    value={ing.unit}
+                    onChange={(e) =>
+                      updateIngredient(idx, "unit", e.target.value)
+                    }
+                    className="order-4 col-span-2 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:order-2 sm:w-28 sm:py-1.5 sm:text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Ingredient"
+                    aria-label="Ingredient name"
+                    value={ing.name}
+                    onChange={(e) =>
+                      updateIngredient(idx, "name", e.target.value)
+                    }
+                    className="order-1 col-span-2 min-w-0 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none sm:order-3 sm:flex-1 sm:py-1.5 sm:text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Prep / notes"
+                    aria-label="Preparation notes"
+                    value={ing.preparation || ""}
+                    onChange={(e) =>
+                      updateIngredient(idx, "preparation", e.target.value)
+                    }
+                    className="order-5 col-span-3 w-full rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-base text-stone-700 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white focus:outline-none sm:order-4 sm:w-44 sm:bg-stone-50/70 sm:py-1.5 sm:text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeIngredient(idx)}
+                    className="order-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-stone-400 hover:bg-stone-100 hover:text-red-600 sm:order-5 sm:h-8 sm:w-8"
+                    aria-label="Remove ingredient"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div>
+            <label
+              htmlFor="preview-instructions"
+              className="block text-sm font-medium text-stone-700"
+            >
+              Instructions
+            </label>
+            <textarea
+              id="preview-instructions"
+              rows={6}
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base leading-relaxed text-stone-900 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:text-sm"
+            />
+          </div>
+        </div>
+      )}
+    </ModalSheet>
   );
 }
