@@ -1,8 +1,12 @@
-.PHONY: install migrate build-web build run dev-api dev-web test clean docker-build docker-run docker-stop
+.PHONY: install migrate build-web build run dev dev-api dev-web dev-caddy test clean docker-build docker-run docker-stop
 
 PYTHON ?= ./.venv/bin/python3
 HOST ?= 0.0.0.0
-PORT ?= 8080
+PORT ?= 8091
+API_PORT ?= $(PORT)
+WEB_PORT ?= 8090
+CADDY_ADDR ?= https://localhost:8443
+HMR_CLIENT_PORT ?= 443
 DOCKER_IMAGE ?= kiln:latest
 DOCKER_CONTAINER ?= kiln
 DOCKER_PORT ?= 8090
@@ -26,10 +30,21 @@ run: build-web migrate
 	.venv/bin/gunicorn kiln_project.wsgi:application --bind $(HOST):$(PORT) --workers 2 --threads 4
 
 dev-api: migrate
-	DJANGO_DEBUG=true $(PYTHON) manage.py runserver $(HOST):$(PORT)
+	DJANGO_DEBUG=true $(PYTHON) manage.py runserver $(HOST):$(API_PORT)
 
 dev-web:
-	npm --prefix web run dev
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) npm --prefix web run dev
+
+dev-caddy:
+	KILN_CADDY_ADDR=$(CADDY_ADDR) API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) caddy run --config Caddyfile.dev --adapter caddyfile
+
+# Start both Django (:8091) and Vite (:8090) configured for HTTPS behind Caddy (HMR over wss://)
+dev: migrate
+	@set -e; \
+	trap 'kill 0' EXIT INT TERM; \
+	DJANGO_DEBUG=true $(PYTHON) manage.py runserver $(HOST):$(API_PORT) & \
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) VITE_HMR_CLIENT_PORT=$(HMR_CLIENT_PORT) npm --prefix web run dev & \
+	wait
 
 test:
 	$(PYTHON) manage.py test -v 2

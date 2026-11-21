@@ -1,0 +1,27 @@
+# Example Caddy site blocks for hosting Kiln behind your existing server Caddy.
+# Copy ONE of the two blocks below into your server's Caddyfile and replace
+# `kiln.example.com` with your real domain (Caddy provisions HTTPS automatically).
+
+# ------------------------------------------------------------------------------
+# Option 1: Development mode (hot-reloading Vite on :8090 + Django API on :8091)
+# Start Kiln with: `make dev` (sets HMR client port 443 for wss:// behind Caddy)
+# ------------------------------------------------------------------------------
+kiln.example.com {
+	@backend path /api/* /admin/* /django-static/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8091
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8090
+	}
+}
+
+# ------------------------------------------------------------------------------
+# Option 2: Production / single-port mode (Django/Gunicorn or Docker serving
+# both `/api/*` and the built `web/dist` PWA bundle on :8091)
+# Start Kiln with: `PORT=8091 make run` (or `DOCKER_PORT=8091 make docker-run`)
+# ------------------------------------------------------------------------------
+# kiln.example.com {
+# 	reverse_proxy 127.0.0.1:8091
+# }

@@ -18,6 +18,10 @@ ALLOWED_HOSTS = ["*"]
 
 APPEND_SLASH = False
 
+# Trust reverse proxy headers from Caddy (HTTPS termination & Host forwarding)
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Allow large HTML pages submitted via Paste HTML or the browser bookmarklet.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MiB
 
@@ -80,6 +84,15 @@ STATIC_DIST_DIR = Path(
     os.environ.get("STATIC_DIR", str(BASE_DIR / "web" / "dist"))
 )
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
+
+_raw_csrf_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in _raw_csrf_origins.split(",")
+    if origin.strip()
+]
+if PUBLIC_BASE_URL and PUBLIC_BASE_URL.rstrip("/") not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(PUBLIC_BASE_URL.rstrip("/"))
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"

@@ -40,15 +40,32 @@ make run
 
 ## Development Mode (Hot Reload)
 
-Run the Django backend and Vite dev server in separate terminals — Vite proxies `/api` requests to Django:
+Run Django (`:8091`) and Vite (`:8090`) together in one terminal (configured for HTTPS HMR behind Caddy on port `443`):
+
+```bash
+make dev
+```
+
+Or run them in separate terminals:
 
 ```bash
 # Terminal 1
-PORT=8091 make dev-api
+make dev-api
 
 # Terminal 2
-API_PORT=8091 make dev-web
+make dev-web
 ```
+
+### Hosting Behind Caddy (HTTPS / PWA Development)
+
+1. **Behind your existing server Caddy (recommended for testing PWA install on your phone):**
+   - Copy the dev site block from `Caddyfile.example` into your server's `Caddyfile` (replacing `kiln.example.com` with your domain) and reload Caddy.
+   - Start Kiln with `PUBLIC_BASE_URL=https://kiln.example.com make dev`.
+   - Caddy routes `/api/*` and `/admin/*` directly to Django (`127.0.0.1:8091`) and everything else (including Vite HMR WebSockets) to Vite (`127.0.0.1:8090`).
+
+2. **Standalone local HTTPS proxy (without touching your system Caddy):**
+   - Terminal 1: `HMR_CLIENT_PORT=8443 make dev`
+   - Terminal 2: `make dev-caddy` (listens on `https://localhost:8443` with `tls internal`, `admin off`, and `auto_https disable_redirects` so it won't collide with an existing Caddy on `:80`/`:443`/`:2019`).
 
 ## Docker
 

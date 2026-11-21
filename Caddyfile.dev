@@ -1,0 +1,27 @@
+# Standalone local HTTPS reverse proxy for Kiln development.
+# Disables the Caddy admin API so it won't collide with an existing system Caddy on :2019.
+#
+# Usage:
+#   make dev-caddy
+#   # or with a custom host/port:
+#   KILN_CADDY_ADDR=https://kiln.local:8443 make dev-caddy
+{
+	admin off
+	auto_https disable_redirects
+	storage file_system ./data/caddy
+}
+
+{$KILN_CADDY_ADDR:https://localhost:8443} {
+	tls internal
+
+	# Route Django API & admin directly to backend dev server
+	@backend path /api/* /admin/* /django-static/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:{$API_PORT:8091}
+	}
+
+	# Route everything else (React SPA + Vite HMR WebSockets) to Vite dev server
+	handle {
+		reverse_proxy 127.0.0.1:{$WEB_PORT:8090}
+	}
+}
