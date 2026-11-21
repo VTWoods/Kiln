@@ -55,6 +55,15 @@ export default defineConfig(({ mode }) => {
           orientation: "any",
           theme_color: "#d97706",
           background_color: "#fafaf9",
+          share_target: {
+            action: "/recipes",
+            method: "GET",
+            params: {
+              title: "share_title",
+              text: "share_text",
+              url: "share_url",
+            },
+          },
           icons: [
             {
               src: "pwa-192x192.png",

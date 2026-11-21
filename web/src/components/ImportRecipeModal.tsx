@@ -10,6 +10,8 @@ import {
 
 type Props = {
   initialPreview?: ImportedRecipe | null;
+  initialUrl?: string;
+  autoFetch?: boolean;
   onClose: () => void;
   onSaved: (recipe: Recipe) => void;
 };
@@ -40,12 +42,17 @@ function buildBookmarkletCode(origin: string): string {
 
 export default function ImportRecipeModal({
   initialPreview,
+  initialUrl,
+  autoFetch = false,
   onClose,
   onSaved,
 }: Props) {
   const [step, setStep] = useState<Step>(initialPreview ? "preview" : "source");
   const [sourceMode, setSourceMode] = useState<SourceMode>("url");
-  const [urlInput, setUrlInput] = useState(initialPreview?.source_url || "");
+  const [urlInput, setUrlInput] = useState(
+    initialPreview?.source_url || initialUrl || "",
+  );
+  const autoFetchedRef = useRef(false);
   const [htmlInput, setHtmlInput] = useState("");
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -151,6 +158,32 @@ export default function ImportRecipeModal({
     setStep("preview");
   };
 
+  const fetchRecipePreview = async (targetUrl: string, html?: string) => {
+    setError(null);
+    setWasBlocked(false);
+    setFetching(true);
+    try {
+      const preview = await importRecipePreview(targetUrl, html);
+      applyPreview(preview);
+    } catch (err: unknown) {
+      setWasBlocked(err instanceof ApiError && err.blocked);
+      setError(
+        err instanceof Error ? err.message : "Failed to fetch recipe preview.",
+      );
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoFetch || initialPreview || !initialUrl?.trim()) return;
+    if (autoFetchedRef.current) return;
+    autoFetchedRef.current = true;
+    void fetchRecipePreview(initialUrl.trim());
+    // Trigger once on mount when opened from Android Web Share Target
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleFetch = async (e: FormEvent) => {
     e.preventDefault();
     const trimmedUrl = urlInput.trim();
@@ -163,23 +196,10 @@ export default function ImportRecipeModal({
       return;
     }
 
-    setError(null);
-    setWasBlocked(false);
-    setFetching(true);
-    try {
-      const preview = await importRecipePreview(
-        trimmedUrl,
-        sourceMode === "html" ? htmlInput : undefined,
-      );
-      applyPreview(preview);
-    } catch (err: unknown) {
-      setWasBlocked(err instanceof ApiError && err.blocked);
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch recipe preview.",
-      );
-    } finally {
-      setFetching(false);
-    }
+    await fetchRecipePreview(
+      trimmedUrl,
+      sourceMode === "html" ? htmlInput : undefined,
+    );
   };
 
   const handleCopyBookmarklet = async () => {

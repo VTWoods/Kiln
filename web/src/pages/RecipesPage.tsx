@@ -13,6 +13,26 @@ import {
   type Recipe,
 } from "../types/recipe";
 
+function extractSharedUrl(
+  shareUrl: string | null,
+  shareText: string | null,
+): string | null {
+  const candidates = [shareUrl, shareText].filter(
+    (v): v is string => Boolean(v && v.trim()),
+  );
+  for (const raw of candidates) {
+    const trimmed = raw.trim();
+    if (/^https?:\/\/\S+$/i.test(trimmed)) {
+      return trimmed.replace(/[).,;!?]+$/, "");
+    }
+    const match = trimmed.match(/https?:\/\/\S+/i);
+    if (match) {
+      return match[0].replace(/[).,;!?]+$/, "");
+    }
+  }
+  return null;
+}
+
 export default function RecipesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -20,6 +40,7 @@ export default function RecipesPage() {
   const [error, setError] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [draftPreview, setDraftPreview] = useState<ImportedRecipe | null>(null);
+  const [sharedImportUrl, setSharedImportUrl] = useState<string | null>(null);
   const [recipeForList, setRecipeForList] = useState<Recipe | null>(null);
   const [recipeForPlan, setRecipeForPlan] = useState<Recipe | null>(null);
   const [addedNotice, setAddedNotice] = useState<{
@@ -54,11 +75,19 @@ export default function RecipesPage() {
   useEffect(() => {
     const draftToken = searchParams.get("import_draft");
     const importError = searchParams.get("import_error");
-    if (!draftToken && !importError) return;
+    const shareUrl = searchParams.get("share_url");
+    const shareText = searchParams.get("share_text");
+    const shareTitle = searchParams.get("share_title");
+    const hasShare = Boolean(shareUrl || shareText || shareTitle);
+
+    if (!draftToken && !importError && !hasShare) return;
 
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("import_draft");
     nextParams.delete("import_error");
+    nextParams.delete("share_url");
+    nextParams.delete("share_text");
+    nextParams.delete("share_title");
     setSearchParams(nextParams, { replace: true });
 
     if (importError) {
@@ -69,6 +98,7 @@ export default function RecipesPage() {
     if (draftToken) {
       getImportDraft(draftToken)
         .then((preview) => {
+          setSharedImportUrl(null);
           setDraftPreview(preview);
           setShowImportModal(true);
         })
@@ -79,12 +109,25 @@ export default function RecipesPage() {
               : "Failed to load bookmarklet recipe preview.",
           );
         });
+      return;
+    }
+
+    if (hasShare) {
+      const extracted = extractSharedUrl(shareUrl, shareText);
+      if (!extracted) {
+        setError("Could not find a recipe URL in the shared link.");
+        return;
+      }
+      setDraftPreview(null);
+      setSharedImportUrl(extracted);
+      setShowImportModal(true);
     }
   }, [searchParams, setSearchParams]);
 
   const handleImported = (created: Recipe) => {
     setRecipes((prev) => [created, ...prev]);
     setDraftPreview(null);
+    setSharedImportUrl(null);
     setShowImportModal(false);
   };
 
@@ -291,8 +334,11 @@ export default function RecipesPage() {
       {showImportModal && (
         <ImportRecipeModal
           initialPreview={draftPreview}
+          initialUrl={sharedImportUrl ?? undefined}
+          autoFetch={Boolean(sharedImportUrl)}
           onClose={() => {
             setDraftPreview(null);
+            setSharedImportUrl(null);
             setShowImportModal(false);
           }}
           onSaved={handleImported}
