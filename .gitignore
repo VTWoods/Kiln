@@ -1,8 +1,9 @@
-# Go build artifacts
-/bin/
-/kiln
+# Python & virtual environment
+.venv/
+__pycache__/
+*.py[cod]
 
-# SQLite database files
+# SQLite database files & cached images
 *.db
 *.db-shm
 *.db-wal
@@ -11,10 +12,6 @@
 # Frontend dependencies & build output
 web/node_modules/
 web/dist/
-
-# Python virtual environment for recipe-scrapers
-.venv/
-__pycache__/
 
 # Environment & editor files
 .env

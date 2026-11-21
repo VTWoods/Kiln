@@ -1,39 +1,41 @@
-.PHONY: install build-web build-api build run dev-api dev-web test clean docker-build docker-run docker-stop
+.PHONY: install migrate build-web build run dev-api dev-web test clean docker-build docker-run docker-stop
 
+PYTHON ?= ./.venv/bin/python3
+HOST ?= 0.0.0.0
+PORT ?= 8080
 DOCKER_IMAGE ?= kiln:latest
 DOCKER_CONTAINER ?= kiln
 DOCKER_PORT ?= 8090
 DOCKER_VOLUME ?= kiln-data:/data
 
 install:
-	go mod tidy
-	npm --prefix web install
 	python3 -m venv .venv
-	.venv/bin/pip install -r scripts/requirements.txt
+	.venv/bin/pip install -r requirements.txt
+	npm --prefix web install
+
+migrate:
+	$(PYTHON) manage.py migrate --fake-initial
 
 build-web:
 	npm --prefix web run build
 
-build-api:
-	go build -o bin/kiln ./cmd/server
+build: build-web
 
-build: build-web build-api
+run: build-web migrate
+	.venv/bin/gunicorn kiln_project.wsgi:application --bind $(HOST):$(PORT) --workers 2 --threads 4
 
-run: build-web
-	go run ./cmd/server
-
-dev-api:
-	go run ./cmd/server
+dev-api: migrate
+	DJANGO_DEBUG=true $(PYTHON) manage.py runserver $(HOST):$(PORT)
 
 dev-web:
 	npm --prefix web run dev
 
 test:
-	go test ./...
+	$(PYTHON) manage.py test -v 2
 	npm --prefix web run typecheck
 
 clean:
-	rm -rf bin web/dist
+	rm -rf web/dist
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
