@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type FormEvent, type ReactNode } from "react";
+import { useBackToClose } from "../hooks/useBackToClose";
 
 export interface ModalSheetProps {
   onClose: () => void;
@@ -39,6 +40,8 @@ export default function ModalSheet({
   const titleId = useId();
   const pointerDownOnBackdropRef = useRef(false);
   const entryRef = useRef<ModalStackEntry>({ onClose, closeDisabled });
+
+  useBackToClose(true, onClose, closeDisabled);
 
   useEffect(() => {
     entryRef.current.onClose = onClose;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type TouchEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getRecipe } from "../api/recipes";
+import { useBackToClose } from "../hooks/useBackToClose";
 import { getCachedRecipe } from "../offline/store";
 import { formatMinutes, type Recipe } from "../types/recipe";
 
@@ -16,12 +17,15 @@ export default function CookModePage() {
   const [checkedIngredients, setCheckedIngredients] = useState<Set<number>>(
     () => new Set(),
   );
-  const [showIngredients, setShowIngredients] = useState(() =>
+  const [isDesktop, setIsDesktop] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia("(min-width: 768px)").matches
       : true,
   );
+  const [showIngredients, setShowIngredients] = useState(() => isDesktop);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useBackToClose(showIngredients && !isDesktop, () => setShowIngredients(false));
 
   useEffect(() => {
     setStepIndex(0);
@@ -122,6 +126,7 @@ export default function CookModePage() {
     if (typeof window === "undefined") return;
     const mql = window.matchMedia("(min-width: 768px)");
     const onChange = (e: MediaQueryListEvent) => {
+      setIsDesktop(e.matches);
       setShowIngredients(e.matches);
     };
     mql.addEventListener("change", onChange);

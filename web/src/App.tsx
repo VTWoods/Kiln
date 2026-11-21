@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useMatch } from "react-router-dom";
+import { useBackToClose } from "./hooks/useBackToClose";
+import { usePwaBackGuard } from "./hooks/usePwaBackGuard";
 import {
   initOfflineSync,
   syncAllForOffline,
@@ -20,6 +22,7 @@ interface BeforeInstallPromptEvent extends Event {
 export default function App() {
   const isCookMode = Boolean(useMatch("/recipes/:id/cook"));
   const offlineStatus = useOfflineStatus();
+  const { exitToastMessage } = usePwaBackGuard(offlineStatus.online);
   const [installPrompt, setInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
@@ -81,11 +84,26 @@ export default function App() {
     }
   };
 
+  const exitToast = exitToastMessage && (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-4 bottom-[max(1.25rem,env(safe-area-inset-bottom))] z-50 flex justify-center"
+    >
+      <div className="rounded-full bg-stone-900/95 px-4 py-2.5 text-center text-sm font-medium text-white shadow-lg ring-1 ring-white/10">
+        {exitToastMessage}
+      </div>
+    </div>
+  );
+
   if (isCookMode) {
     return (
-      <Routes>
-        <Route path="/recipes/:id/cook" element={<CookModePage />} />
-      </Routes>
+      <>
+        <Routes>
+          <Route path="/recipes/:id/cook" element={<CookModePage />} />
+        </Routes>
+        {exitToast}
+      </>
     );
   }
 
@@ -141,13 +159,34 @@ export default function App() {
           <Route path="*" element={<Navigate to="/recipes" replace />} />
         </Routes>
       </main>
+      {exitToast}
     </div>
   );
 }
 
 function KilnBrandSyncButton({ status }: { status: OfflineStatus }) {
   const [open, setOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useBackToClose(open, () => setOpen(false));
+
+  const handleForceRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.race([
+          Promise.all(registrations.map((reg) => reg.update().catch(() => {}))),
+          new Promise((resolve) => window.setTimeout(resolve, 1500)),
+        ]);
+      }
+    } catch {
+      // Ignore service worker update errors (e.g. offline) and reload anyway
+    }
+    window.location.reload();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -304,7 +343,7 @@ function KilnBrandSyncButton({ status }: { status: OfflineStatus }) {
 
           <button
             type="button"
-            disabled={status.syncing}
+            disabled={status.syncing || refreshing}
             onClick={() => {
               if (!status.syncing) {
                 void syncAllForOffline();
@@ -319,6 +358,22 @@ function KilnBrandSyncButton({ status }: { status: OfflineStatus }) {
               </>
             ) : (
               "Sync now"
+            )}
+          </button>
+
+          <button
+            type="button"
+            disabled={refreshing}
+            onClick={() => void handleForceRefresh()}
+            className="mt-2 inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-red-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 active:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {refreshing ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-red-200 border-t-white" />
+                Refreshing…
+              </>
+            ) : (
+              "Force Refresh"
             )}
           </button>
         </div>
