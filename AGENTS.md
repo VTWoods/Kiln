@@ -1,0 +1,165 @@
+# AGENTS.md — Developer & AI Agent Guide for Kiln
+
+Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for importing recipes from the web, planning weekly meals, managing aisle-grouped shopping lists, and casting touch-friendly Cook Mode instructions to a Google Nest Hub.
+
+---
+
+## 1. Tech Stack
+
+- **Backend:** Python 3.12 + Django 5.2 + SQLite (`./data/kiln.db`), served via Gunicorn in production.
+  - Recipe scraping: `recipe-scrapers`
+  - Ingredient parsing & units: `ingredient-parser-nlp` (NLTK), `pint`, `inflect`
+  - Grocery aisle classification: Hybrid local categorizer + NLTK `wordnet`
+  - Nest Hub casting: `pychromecast` (`DashCastController`)
+- **Frontend:** React 19 + TypeScript + Tailwind CSS v4 + Vite 6 + React Router 7.
+  - Offline PWA: `vite-plugin-pwa` (Workbox `generateSW`) + `idb` (IndexedDB cache + FIFO outbox sync).
+- **Reverse Proxy (Dev & Prod):** Caddy HTTPS (`Caddyfile.example` / `Caddyfile.dev`).
+
+---
+
+## 2. Repository Structure
+
+```text
+.
+├── kiln_project/
+│   ├── settings.py          # Django config, DB/image/static paths, Caddy proxy headers, 10 MiB upload limit
+│   ├── urls.py              # All /api/* routes + /api catch-all JSON 404 + SPA static fallback
+│   └── wsgi.py
+├── api/
+│   ├── models.py            # Recipe, RecipeIngredient, ShoppingList, ShoppingListItem,
+│   │                        # IngredientAisleOverride, PantryStaple, MealPlanEntry
+│   ├── migrations/          # 0001..0006 (keep backwards-compatible with existing ./data/kiln.db)
+│   ├── management/commands/
+│   │   └── normalize_recipes.py  # Backfill/re-parse legacy ingredients & re-merge shopping lists
+│   ├── services/            # Domain logic + co-located unit tests (test_*.py)
+│   │   ├── fetcher.py             # SSRF-safe HTTP fetcher (blocks private/loopback IPs, size limits)
+│   │   ├── importer.py            # RecipeImporter ABC + RecipeScrapersImporter (import_url & import_html)
+│   │   ├── import_drafts.py       # Thread-safe in-memory TTL store for bookmarklet previews
+│   │   ├── images.py              # Candidate image extraction + local cache under ./data/images/
+│   │   ├── ingredient_parser.py   # IngredientParser ABC + NLPIngredientParser
+│   │   ├── units.py               # Pint + inflect US customary unit normalization & quantity merging
+│   │   ├── shopping_list_merger.py# Deduplication, singular/plural matching, multi-recipe M2M, aisles
+│   │   ├── aisle_categorizer.py   # AisleCategorizer ABC + HybridAisleCategorizer (rules + lexicon + WordNet)
+│   │   ├── pantry_staples.py      # Default staples + PantryStaple matching
+│   │   └── caster.py              # Caster ABC + PyChromecastCaster (DashCast)
+│   ├── views/               # Function-based JSON/HTML views + co-located tests (test_*.py)
+│   │   ├── health.py, recipes.py, shopping_lists.py, pantry_staples.py,
+│   │   ├── meal_plan.py, cast.py, spa.py
+│   ├── templates/api/cast_view.html  # Self-contained Nest Hub Cook Mode HTML
+│   ├── test_models.py       # Model unit tests
+│   └── test_e2e.py          # Feature-organized E2E smoke tests
+├── web/
+│   ├── public/              # favicon.svg, pwa-192x192.png, pwa-512x512.png, maskable, apple-touch-icon
+│   ├── vite.config.ts       # Vite proxy, Caddy allowedHosts/HMR, VitePWA manifest + share_target + Workbox
+│   └── src/
+│       ├── App.tsx          # Sticky top nav (Kiln+sync, Recipe, Plan, List) & routes
+│       ├── api/             # Offline-first API clients (recipes, shoppingLists, pantryStaples, mealPlan, cast)
+│       ├── offline/         # IndexedDB store (store.ts) & outbox sync engine (sync.ts)
+│       ├── pages/           # RecipesPage, RecipeDetailPage, MealPlanPage, ShoppingListsPage, CookModePage
+│       ├── components/      # ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
+│       │                    # AddMealPlanToShoppingListModal, ManagePantryStaplesModal, CastRecipeModal
+│       └── types/           # recipe.ts, shoppingList.ts, mealPlan.ts (Mon–Sun date utils)
+├── Caddyfile.dev            # Standalone local HTTPS proxy (:8443, admin off, no :80 redirects)
+├── Caddyfile.example        # Production & dev blocks for an existing server Caddyfile
+├── Dockerfile               # Multi-stage Node 22 + Python 3.12-slim build
+└── Makefile                 # install, migrate, build, run, dev, dev-api, dev-web, dev-caddy, test, docker-*
+```
+
+---
+
+## 3. Common Commands
+
+```bash
+# Install Python venv, pip deps, NLTK data (tagger + wordnet), and npm deps
+make install
+
+# Run Django unit + E2E tests (50 tests) AND TypeScript typecheck
+make test
+
+# Apply SQLite migrations safely (preserves existing ./data/kiln.db)
+make migrate
+
+# Build React + Workbox PWA production bundle into web/dist
+npm --prefix web run build
+
+# Run Django (:8091) + Vite (:8090) together behind Caddy HTTPS
+PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev
+
+# Or run individually:
+PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev-api   # Django on 0.0.0.0:8091
+VITE_HMR_CLIENT_PORT=443 make dev-web                       # Vite on 0.0.0.0:8090
+
+# Normalize legacy recipe ingredients (and optionally re-merge shopping lists)
+./.venv/bin/python3 manage.py normalize_recipes --dry-run
+./.venv/bin/python3 manage.py normalize_recipes --remerge-shopping-lists
+```
+
+**Runtime ports & data:**
+- Dev backend runs on `:8091` and Vite dev server on `:8090` (ports `8080`/`8081` may already be in use on the host).
+- Production/local user data lives in `./data/kiln.db` and `./data/images/` (both gitignored — **never delete or wipe `./data/kiln.db`**).
+
+---
+
+## 4. Architecture Conventions
+
+### Keep Swappable Service Interfaces Intact
+Four core capabilities sit behind ABCs so implementations can be swapped or stubbed cleanly in tests:
+- `RecipeImporter` ([api/services/importer.py](api/services/importer.py))
+- `IngredientParser` ([api/services/ingredient_parser.py](api/services/ingredient_parser.py))
+- `AisleCategorizer` ([api/services/aisle_categorizer.py](api/services/aisle_categorizer.py))
+- `Caster` ([api/services/caster.py](api/services/caster.py))
+
+Keep new business logic inside `api/services/` rather than bloating Django views.
+
+### UI Style & Conventions
+- Palette: warm `stone` neutrals (`stone-50`, `stone-200`, `stone-900`) + `amber` accents (`amber-600`, `amber-50`).
+- Keep the top navigation bar sticky (`sticky top-0 z-30`), compact, and single-row on mobile:
+  - Brand button (`Kiln` + inline sync indicator) on the left; tabs named **Recipe**, **Plan**, **List**.
+  - Compact action labels (`+ Plan`, `+ List`, `Cast`, icon-only `←` back button, `⋮` overflow menu for `Cook Mode` / `Delete`).
+
+---
+
+## 5. Critical Gotchas & Domain Invariants
+
+1. **Always rebuild `web/dist` after frontend edits:**
+   Django serves `web/dist` directly on `:8091` (and the full offline PWA precache only exists in `web/dist/sw.js`). Always run `npm --prefix web run build` and `make test` before wrapping up.
+2. **NLTK offline corpora:**
+   `ingredient-parser-nlp` needs `averaged_perceptron_tagger_eng` and `aisle_categorizer.py` uses `wordnet`. Both are installed in `.venv/nltk_data` (local) and `/usr/local/share/nltk_data` (Docker) so tests work offline. If you add another NLTK corpus, update both `Makefile` (`install`) and `Dockerfile`.
+3. **Pint & Ingredient Parser edge cases:**
+   - In `api/services/units.py`, keep the explicit overrides in `_CULINARY_OVERRIDES` / `_NON_PHYSICAL_UNITS` / `_ALLOWED_PINT_UNITS` — raw Pint parses `"fl oz"` as `femtoliter * ounce`, `"c"` as speed of light, `"t"` as metric ton, and `"pinch"` as `picoinch`.
+   - In `api/services/ingredient_parser.py`:
+     - Only override `flat[0]` with a `US_CUSTOMARY` candidate when `flat[0].unit_system == UnitSystem.METRIC`. Primary counts like `"4 medium carrots (10 ounces; 275g)"` must stay `quantity="4", unit=""` so they merge with `"6-8 carrots"`.
+     - Keep `separate_names=False` so `"or"` phrasing (`"homemade or store-bought..."`) is not rewritten as `"and"`.
+     - Leading unit size qualifiers (`small`, `medium`, `large`) are split out of `unit` into `preparation` (`3 medium cloves garlic` → `unit="clove"`).
+4. **Shopping list merging & multi-recipe tracking:**
+   - `ShoppingListItem` has BOTH a legacy `recipe` FK (backwards compatibility) and a `recipes` M2M (`shopping_list_item_recipes`) so merged items display clickable chips for every contributing recipe.
+   - Matching uses `ingredient_merge_key()` (lowercased + `inflect.singular_noun` on the last word) and skips checked-off items.
+   - Changing an item's `aisle` via `PATCH` saves an `IngredientAisleOverride` so future additions remember the user's preferred aisle.
+5. **Nest Hub Casting (`api/services/caster.py` & `api/templates/api/cast_view.html`):**
+   - Uses `DashCastController` (`APP_DASHCAST = "84912283"`, `force=True`) pointing at self-contained server-rendered HTML (`GET /api/cast/recipes/:id/view`).
+   - **Do NOT load CAF v3 `cast_receiver_framework.js`** inside DashCast's v2 receiver — it disables Nest Hub touch input. Keep the touch-safe silent WAV loop (`/api/cast/silence.wav`, `pointer-events: none`) + Screen Wake Lock + 1-hour inactivity auto-release.
+6. **Offline PWA & IndexedDB (`web/src/offline/`):**
+   - When adding a new IndexedDB object store in `web/src/offline/store.ts`, **increment `DB_VERSION`** (currently `2`).
+   - In `web/vite.config.ts`, keep `navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//]` so Workbox never intercepts Cast views, bookmarklet POSTs, or Django Admin.
+   - `share_target` in `manifest` uses `GET /recipes` (`share_title`, `share_text`, `share_url`); `RecipesPage` extracts URLs from either `share_url` or `share_text`.
+7. **Recipe importing & gated sites:**
+   - Sites behind Cloudflare/WAF return `HTTP 403` to server fetches. **Never add anti-bot/CAPTCHA bypasses or headless-browser evasion.** Use the built-in **Save to Kiln** bookmarklet (`POST /api/recipes/bookmarklet` via `<form method="POST" target="_blank">`, which works even under `Cross-Origin-Opener-Policy: same-origin`) or **Paste HTML**.
+   - `ImportDraftStore.get()` is intentionally non-destructive (TTL-based) so React 19 StrictMode double-mounts don't consume a draft token before rendering.
+8. **Meal planning dates:**
+   - Weeks run **Monday–Sunday** and default to **Next Week**.
+   - Always use the local-timezone helpers in `web/src/types/mealPlan.ts` (`parseDateISO`, `formatDateISO`, `getMondayOfWeek`) — never `new Date("YYYY-MM-DD")`, which parses as UTC midnight and shifts dates backward in western timezones.
+9. **Django `StatReloader` quirk:**
+   - Making multiple rapid edits to `kiln_project/urls.py` can occasionally race Django's `StatReloader`. If a newly added route returns 404 while `dev-api` is running, run `touch kiln_project/urls.py` (or restart `dev-api`).
+
+---
+
+## 6. Testing Expectations
+
+- Unit tests are co-located next to the module they cover (`api/services/test_*.py`, `api/views/test_*.py`, `api/test_models.py`).
+- Cross-cutting user flows live in `api/test_e2e.py`.
+- All backend tests run offline in an in-memory SQLite DB with zero external network calls (stub `RecipeImporter`, `Caster`, and HTTP openers via `unittest.mock` or `api/testing_utils.py`).
+- Before finishing any change:
+  1. Run `make test` (all Django tests + `tsc --noEmit`).
+  2. Run `npm --prefix web run build` if any frontend files changed.
+  3. Run `make migrate` if any new migration was added.
+  4. Do not commit or push unless the user asks.
