@@ -13,7 +13,7 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
   - Nest Hub casting: `pychromecast` (`DashCastController`)
 - **Frontend:** React 19 + TypeScript + Tailwind CSS v4 + Vite 6 + React Router 7.
   - Offline PWA: `vite-plugin-pwa` (Workbox `generateSW`) + `idb` (IndexedDB cache + FIFO outbox sync).
-- **Reverse Proxy (Dev & Prod):** Caddy HTTPS (`Caddyfile.example` / `Caddyfile.dev`).
+- **Reverse Proxy (Dev & Prod):** Caddy HTTPS (`examples/Caddyfile.example` / `examples/Caddyfile.dev`).
 
 ---
 
@@ -59,8 +59,10 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 │       ├── components/      # ModalSheet, ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
 │       │                    # AddMealPlanToShoppingListModal, ManagePantryStaplesModal, CastRecipeModal
 │       └── types/           # recipe.ts, shoppingList.ts, mealPlan.ts (Mon–Sun date utils)
-├── Caddyfile.dev            # Standalone local HTTPS proxy (:8443, admin off, no :80 redirects)
-├── Caddyfile.example        # Production & dev blocks for an existing server Caddyfile
+├── examples/
+│   ├── Caddyfile.dev        # Standalone local HTTPS proxy (:8443, admin off, no :80 redirects)
+│   ├── Caddyfile.example    # Production & dev blocks for an existing server Caddyfile
+│   └── docker-compose.yml   # Production Docker Compose example (single-port PWA + API)
 ├── Dockerfile               # Multi-stage Node 22 + Python 3.12-slim build
 └── Makefile                 # install, migrate, build, run, dev, dev-api, dev-web, dev-caddy, test, docker-*
 ```

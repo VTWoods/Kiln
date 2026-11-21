@@ -36,7 +36,7 @@ dev-web:
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) npm --prefix web run dev
 
 dev-caddy:
-	KILN_CADDY_ADDR=$(CADDY_ADDR) API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) caddy run --config Caddyfile.dev --adapter caddyfile
+	KILN_CADDY_ADDR=$(CADDY_ADDR) API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) caddy run --config examples/Caddyfile.dev --adapter caddyfile
 
 # Start both Django (:8091) and Vite (:8090) configured for HTTPS behind Caddy (HMR over wss://)
 dev: migrate

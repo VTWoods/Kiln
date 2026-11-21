@@ -1,7 +1,7 @@
 # Standalone local HTTPS reverse proxy for Kiln development.
 # Disables the Caddy admin API so it won't collide with an existing system Caddy on :2019.
 #
-# Usage:
+# Usage (from repository root):
 #   make dev-caddy
 #   # or with a custom host/port:
 #   KILN_CADDY_ADDR=https://kiln.local:8443 make dev-caddy

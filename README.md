@@ -20,6 +20,7 @@ A personal cooking web app for importing recipes from the web, managing shopping
 │   ├── views/               # JSON API views, Nest Hub Cook Mode view, SPA static fallback
 │   └── templates/api/       # Self-contained Nest Hub Cook Mode HTML template
 ├── web/                     # React + TypeScript + Tailwind CSS frontend (Vite)
+├── examples/                # Caddyfile (dev & prod) and Docker Compose deployment examples
 ├── Dockerfile               # Multi-stage Node + Python/Django container build
 └── Makefile                 # Build, run, test, and Docker helpers
 ```
@@ -59,7 +60,7 @@ make dev-web
 ### Hosting Behind Caddy (HTTPS / PWA Development)
 
 1. **Behind your existing server Caddy (recommended for testing PWA install on your phone):**
-   - Copy the dev site block from `Caddyfile.example` into your server's `Caddyfile` (replacing `kiln.example.com` with your domain) and reload Caddy.
+   - Copy the dev site block from `examples/Caddyfile.example` into your server's `Caddyfile` (replacing `kiln.example.com` with your domain) and reload Caddy.
    - Start Kiln with `PUBLIC_BASE_URL=https://kiln.example.com make dev`.
    - Caddy routes `/api/*` and `/admin/*` directly to Django (`127.0.0.1:8091`) and everything else (including Vite HMR WebSockets) to Vite (`127.0.0.1:8090`).
 
@@ -81,6 +82,12 @@ make docker-run
 
 # Stop and remove the container
 make docker-stop
+```
+
+Or deploy with Docker Compose using [examples/docker-compose.yml](examples/docker-compose.yml) (paired with Option 2 in [examples/Caddyfile.example](examples/Caddyfile.example) for HTTPS + full offline PWA caching):
+
+```bash
+docker compose -f examples/docker-compose.yml up -d --build
 ```
 
 *(Note: for mDNS Nest Hub discovery inside Docker, pass `--network host`, or enter the Nest Hub IP manually in the Cast modal.)*

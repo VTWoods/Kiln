@@ -1,0 +1,55 @@
+# Example Docker Compose setup for running Kiln in production (serves both the
+# Django API and the built offline-capable Workbox PWA bundle on a single port).
+#
+# Usage (from repository root):
+#   docker compose -f examples/docker-compose.yml up -d --build
+#
+# Tip: Pair with Option 2 in `examples/Caddyfile.example` to reverse-proxy HTTPS
+# to `127.0.0.1:8091` for full Android/iOS PWA install and offline cold-start.
+
+services:
+  kiln:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: kiln:latest
+    container_name: kiln
+    restart: unless-stopped
+
+    # Bind only to localhost when sitting behind a reverse proxy like Caddy.
+    # Change to "8091:8080" to expose directly on your LAN.
+    ports:
+      - "127.0.0.1:8091:8080"
+
+    # For automatic mDNS Google Nest Hub discovery on your LAN, comment out
+    # `ports:` above, uncomment `network_mode: host`, and set `PORT: "8091"`
+    # below (otherwise you can enter your Nest Hub IP manually in the Cast modal).
+    # network_mode: host
+
+    environment:
+      # PORT: "8091" # Uncomment when using network_mode: host
+      PUBLIC_BASE_URL: "https://kiln.example.com"
+      DJANGO_SECRET_KEY: "change-me-to-a-long-random-secret"
+      DJANGO_DEBUG: "false"
+
+    volumes:
+      # Persists /data/kiln.db (SQLite) and /data/images/ (cached recipe photos).
+      # To reuse an existing local ./data directory instead, swap for:
+      # - ../data:/data
+      - kiln-data:/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT', '8080')}/api/health\", timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  kiln-data:

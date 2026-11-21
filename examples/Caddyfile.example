@@ -18,9 +18,9 @@ kiln.example.com {
 }
 
 # ------------------------------------------------------------------------------
-# Option 2: Production / single-port mode (Django/Gunicorn or Docker serving
-# both `/api/*` and the built `web/dist` PWA bundle on :8091)
-# Start Kiln with: `PORT=8091 make run` (or `DOCKER_PORT=8091 make docker-run`)
+# Option 2: Production / single-port mode (Django/Gunicorn or Docker Compose
+# serving both `/api/*` and the built `web/dist` PWA bundle on :8091)
+# Start Kiln with: `PORT=8091 make run` or `docker compose -f examples/docker-compose.yml up -d`
 # ------------------------------------------------------------------------------
 # kiln.example.com {
 # 	reverse_proxy 127.0.0.1:8091
