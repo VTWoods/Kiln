@@ -7,6 +7,7 @@ import {
   type OfflineStatus,
 } from "./offline/sync";
 import CookModePage from "./pages/CookModePage";
+import MealPlanPage from "./pages/MealPlanPage";
 import RecipesPage from "./pages/RecipesPage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import ShoppingListsPage from "./pages/ShoppingListsPage";
@@ -82,6 +83,9 @@ export default function App() {
               <NavLink to="/recipes" className={navLinkClass}>
                 Recipes
               </NavLink>
+              <NavLink to="/meal-plan" className={navLinkClass}>
+                Meal Plan
+              </NavLink>
               <NavLink to="/shopping-lists" className={navLinkClass}>
                 Shopping Lists
               </NavLink>
@@ -108,6 +112,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/recipes" replace />} />
           <Route path="/recipes" element={<RecipesPage />} />
           <Route path="/recipes/:id" element={<RecipeDetailPage />} />
+          <Route path="/meal-plan" element={<MealPlanPage />} />
           <Route path="/shopping-lists" element={<ShoppingListsPage />} />
           <Route path="*" element={<Navigate to="/recipes" replace />} />
         </Routes>

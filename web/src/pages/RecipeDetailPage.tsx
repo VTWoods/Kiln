@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { deleteRecipe, getRecipe } from "../api/recipes";
+import AddToMealPlanModal from "../components/AddToMealPlanModal";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import CastRecipeModal from "../components/CastRecipeModal";
+import { formatDayLabel } from "../types/mealPlan";
 import {
   formatHostname,
   formatMinutes,
@@ -19,11 +21,17 @@ export default function RecipeDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showAddToListModal, setShowAddToListModal] = useState(false);
+  const [showAddToPlanModal, setShowAddToPlanModal] = useState(false);
   const [showCastModal, setShowCastModal] = useState(false);
   const [addedNotice, setAddedNotice] = useState<{
     listId: number;
     listName: string;
     addedCount: number;
+  } | null>(null);
+  const [plannedNotice, setPlannedNotice] = useState<{
+    weekStart: string;
+    date: string;
+    recipeTitle: string;
   } | null>(null);
 
   useEffect(() => {
@@ -118,6 +126,13 @@ export default function RecipeDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowAddToPlanModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+          >
+            + Add to Meal Plan
+          </button>
+          <button
+            type="button"
             onClick={() => setShowAddToListModal(true)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
           >
@@ -174,6 +189,36 @@ export default function RecipeDetailPage() {
             <button
               type="button"
               onClick={() => setAddedNotice(null)}
+              className="text-emerald-600 hover:text-emerald-900"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {plannedNotice && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span>
+            Added <strong>{plannedNotice.recipeTitle}</strong> to your meal plan
+            for{" "}
+            <strong>
+              {formatDayLabel(plannedNotice.date).weekday},{" "}
+              {formatDayLabel(plannedNotice.date).shortDate}
+            </strong>
+            .
+          </span>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/meal-plan?week=${plannedNotice.weekStart}`}
+              className="font-medium text-emerald-900 underline hover:text-emerald-700"
+            >
+              View Meal Plan →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setPlannedNotice(null)}
               className="text-emerald-600 hover:text-emerald-900"
               aria-label="Dismiss"
             >
@@ -331,6 +376,18 @@ export default function RecipeDetailPage() {
           onAdded={(info) => {
             setShowAddToListModal(false);
             setAddedNotice(info);
+          }}
+        />
+      )}
+
+      {showAddToPlanModal && (
+        <AddToMealPlanModal
+          recipeId={recipe.id}
+          recipeTitle={recipe.title}
+          onClose={() => setShowAddToPlanModal(false)}
+          onAdded={(info) => {
+            setShowAddToPlanModal(false);
+            setPlannedNotice(info);
           }}
         />
       )}

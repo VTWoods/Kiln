@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getImportDraft, listRecipes } from "../api/recipes";
+import AddToMealPlanModal from "../components/AddToMealPlanModal";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import ImportRecipeModal from "../components/ImportRecipeModal";
+import { formatDayLabel } from "../types/mealPlan";
 import {
   formatHostname,
   formatMinutes,
@@ -19,10 +21,16 @@ export default function RecipesPage() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [draftPreview, setDraftPreview] = useState<ImportedRecipe | null>(null);
   const [recipeForList, setRecipeForList] = useState<Recipe | null>(null);
+  const [recipeForPlan, setRecipeForPlan] = useState<Recipe | null>(null);
   const [addedNotice, setAddedNotice] = useState<{
     listId: number;
     listName: string;
     addedCount: number;
+    recipeTitle: string;
+  } | null>(null);
+  const [plannedNotice, setPlannedNotice] = useState<{
+    weekStart: string;
+    date: string;
     recipeTitle: string;
   } | null>(null);
 
@@ -134,6 +142,36 @@ export default function RecipesPage() {
         </div>
       )}
 
+      {plannedNotice && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span>
+            Added <strong>{plannedNotice.recipeTitle}</strong> to your meal plan
+            for{" "}
+            <strong>
+              {formatDayLabel(plannedNotice.date).weekday},{" "}
+              {formatDayLabel(plannedNotice.date).shortDate}
+            </strong>
+            .
+          </span>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/meal-plan?week=${plannedNotice.weekStart}`}
+              className="font-medium text-emerald-900 underline hover:text-emerald-700"
+            >
+              View Meal Plan →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setPlannedNotice(null)}
+              className="text-emerald-600 hover:text-emerald-900"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((n) => (
@@ -227,13 +265,20 @@ export default function RecipesPage() {
                     )}
                   </div>
 
-                  <div className="mt-3 border-t border-stone-100 pt-3">
+                  <div className="mt-3 grid grid-cols-2 gap-2 border-t border-stone-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setRecipeForPlan(recipe)}
+                      className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
+                    >
+                      + Meal Plan
+                    </button>
                     <button
                       type="button"
                       onClick={() => setRecipeForList(recipe)}
-                      className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
+                      className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900"
                     >
-                      + Add to Shopping List
+                      + Shopping List
                     </button>
                   </div>
                 </div>
@@ -265,6 +310,18 @@ export default function RecipesPage() {
               recipeTitle: recipeForList.title,
             });
             setRecipeForList(null);
+          }}
+        />
+      )}
+
+      {recipeForPlan && (
+        <AddToMealPlanModal
+          recipeId={recipeForPlan.id}
+          recipeTitle={recipeForPlan.title}
+          onClose={() => setRecipeForPlan(null)}
+          onAdded={(info) => {
+            setPlannedNotice(info);
+            setRecipeForPlan(null);
           }}
         />
       )}

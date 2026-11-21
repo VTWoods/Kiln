@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { PantryStaple } from "../api/pantryStaples";
+import type { MealPlanWeek } from "../types/mealPlan";
 import type { Recipe } from "../types/recipe";
 import type {
   AddShoppingListItemInput,
@@ -53,6 +54,10 @@ interface KilnOfflineDB extends DBSchema {
     key: number;
     value: PantryStaple;
   };
+  mealPlanWeeks: {
+    key: string;
+    value: MealPlanWeek;
+  };
   outbox: {
     key: number;
     value: OutboxOp;
@@ -64,7 +69,7 @@ interface KilnOfflineDB extends DBSchema {
 }
 
 const DB_NAME = "kiln-offline-v1";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<KilnOfflineDB>> | null = null;
 
@@ -80,6 +85,9 @@ function getDb(): Promise<IDBPDatabase<KilnOfflineDB>> {
         }
         if (!db.objectStoreNames.contains("pantryStaples")) {
           db.createObjectStore("pantryStaples", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("mealPlanWeeks")) {
+          db.createObjectStore("mealPlanWeeks", { keyPath: "week_start" });
         }
         if (!db.objectStoreNames.contains("outbox")) {
           db.createObjectStore("outbox", {
@@ -277,6 +285,30 @@ export async function saveCachedPantryStaples(
       await tx.store.put(staple);
     }
     await tx.done;
+  } catch {
+    // Ignore
+  }
+}
+
+// --- Meal Plan Weeks ---
+
+export async function getCachedMealPlanWeek(
+  weekStart: string,
+): Promise<MealPlanWeek | null> {
+  try {
+    const db = await getDb();
+    return (await db.get("mealPlanWeeks", weekStart)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCachedMealPlanWeek(
+  week: MealPlanWeek,
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.put("mealPlanWeeks", week);
   } catch {
     // Ignore
   }

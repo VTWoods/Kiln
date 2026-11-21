@@ -122,3 +122,25 @@ class PantryStaple(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class MealPlanEntry(models.Model):
+    """A recipe scheduled on a specific calendar date in the weekly meal plan."""
+
+    date = models.DateField(db_index=True)
+    recipe = models.ForeignKey(
+        Recipe,
+        on_delete=models.CASCADE,
+        related_name="meal_plan_entries",
+        db_column="recipe_id",
+    )
+    notes = models.TextField(blank=True, default="")
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "meal_plan_entries"
+        ordering = ["date", "sort_order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.date.isoformat()} - {self.recipe.title}"

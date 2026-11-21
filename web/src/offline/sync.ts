@@ -1,5 +1,10 @@
 import { useSyncExternalStore } from "react";
 import type { PantryStaple } from "../api/pantryStaples";
+import {
+  getNextWeekMonday,
+  getThisWeekMonday,
+  type MealPlanWeek,
+} from "../types/mealPlan";
 import type { Recipe } from "../types/recipe";
 import type { ShoppingList } from "../types/shoppingList";
 import {
@@ -9,6 +14,7 @@ import {
   isOfflineError,
   listOutboxOps,
   OfflineNetworkError,
+  saveCachedMealPlanWeek,
   saveCachedPantryStaples,
   saveCachedRecipe,
   saveCachedRecipesSummary,
@@ -309,6 +315,23 @@ export function syncAllForOffline(): Promise<boolean> {
         const staples = (await staplesRes.json()) as PantryStaple[];
         await saveCachedPantryStaples(staples);
       }
+
+      // 4. Meal plans for this week & next week
+      await Promise.all(
+        [getThisWeekMonday(), getNextWeekMonday()].map(async (weekStart) => {
+          try {
+            const mpRes = await fetch(
+              `/api/meal-plan?week_start=${encodeURIComponent(weekStart)}`,
+            );
+            if (mpRes.ok) {
+              const week = (await mpRes.json()) as MealPlanWeek;
+              await saveCachedMealPlanWeek(week);
+            }
+          } catch {
+            // Skip individual failures
+          }
+        }),
+      );
 
       const syncedIso = new Date().toISOString();
       await setLastSyncedAt(syncedIso);
