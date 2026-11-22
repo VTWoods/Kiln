@@ -1,10 +1,13 @@
 import { apiFetch } from "../offline/fetch";
 import {
   deleteCachedShoppingList,
+  deleteOutboxOpsForList,
   enqueueOutboxOp,
   getCachedShoppingList,
   getCachedShoppingLists,
   isOfflineError,
+  listOutboxOps,
+  OfflineNetworkError,
   saveCachedShoppingList,
   saveCachedShoppingListsSummary,
 } from "../offline/store";
@@ -48,12 +51,22 @@ async function parseJsonOrThrow<T>(res: Response): Promise<T> {
 export async function listShoppingLists(): Promise<ShoppingList[]> {
   try {
     if (!isOfflineCircuitOpen()) {
-      await flushOutbox();
+      const flushed = await flushOutbox();
+      if (!flushed) {
+        return getCachedShoppingLists();
+      }
     }
     const res = await apiFetch("/api/shopping-lists");
     const lists = await parseJsonOrThrow<ShoppingList[]>(res);
-    void saveCachedShoppingListsSummary(lists);
-    return lists;
+    try {
+      if ((await listOutboxOps()).length === 0) {
+        void saveCachedShoppingListsSummary(lists);
+        return lists;
+      }
+    } catch {
+      // If we cannot verify the outbox is empty, keep local cache safe
+    }
+    return getCachedShoppingLists();
   } catch (err) {
     if (isOfflineError(err)) {
       return getCachedShoppingLists();
@@ -65,12 +78,27 @@ export async function listShoppingLists(): Promise<ShoppingList[]> {
 export async function getShoppingList(id: number): Promise<ShoppingList> {
   try {
     if (!isOfflineCircuitOpen()) {
-      await flushOutbox();
+      const flushed = await flushOutbox();
+      if (!flushed) {
+        const cached = await getCachedShoppingList(id);
+        if (cached) return cached;
+        throw new OfflineNetworkError(
+          "Pending offline changes have not synced yet.",
+        );
+      }
     }
     const res = await apiFetch(`/api/shopping-lists/${id}`);
     const list = await parseJsonOrThrow<ShoppingList>(res);
-    void saveCachedShoppingList(list);
-    return list;
+    try {
+      if ((await listOutboxOps()).length === 0) {
+        void saveCachedShoppingList(list);
+        return list;
+      }
+    } catch {
+      // If we cannot verify the outbox is empty, keep local cache safe
+    }
+    const cached = await getCachedShoppingList(id);
+    return cached ?? list;
   } catch (err) {
     if (isOfflineError(err)) {
       const cached = await getCachedShoppingList(id);
@@ -111,14 +139,18 @@ export async function deleteShoppingList(id: number): Promise<void> {
     if (!res.ok) {
       await parseJsonOrThrow<never>(res);
     }
-    void deleteCachedShoppingList(id);
+    await deleteCachedShoppingList(id);
   } catch (err) {
-    if (isOfflineError(err)) {
-      throw new Error(
-        "Deleting a shopping list requires a connection to your Kiln server.",
-      );
-    }
-    throw err;
+    if (!isOfflineError(err)) throw err;
+
+    await deleteCachedShoppingList(id);
+    await deleteOutboxOpsForList(id);
+    await enqueueOutboxOp({
+      kind: "delete_list",
+      listId: id,
+      createdAt: new Date().toISOString(),
+    });
+    await refreshPendingCount();
   }
 }
 

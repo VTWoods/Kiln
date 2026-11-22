@@ -9,6 +9,7 @@ import type { Recipe } from "../types/recipe";
 import type { ShoppingList } from "../types/shoppingList";
 import {
   countOutboxOps,
+  deleteCachedShoppingList,
   deleteOutboxOp,
   getLastSyncedAt,
   isOfflineError,
@@ -121,104 +122,138 @@ export function flushOutbox(): Promise<boolean> {
   if (activeFlush) return activeFlush;
 
   activeFlush = (async () => {
-    const ops = await listOutboxOps();
-    if (ops.length === 0) {
-      await refreshPendingCount();
-      return true;
-    }
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      markApiOffline();
-      return false;
-    }
-
-    updateStatus({ syncing: true, syncError: null });
     const tempIdMap = new Map<number, number>();
     let flushedAny = false;
+    let startedSync = false;
 
     try {
-      for (const op of ops) {
-        if (op.seq === undefined) continue;
+      while (true) {
+        const ops = await listOutboxOps();
+        if (ops.length === 0) {
+          break;
+        }
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          markApiOffline();
+          return false;
+        }
 
-        if (op.kind === "add_items") {
-          const res = await syncFetch(`/api/shopping-lists/${op.listId}/items`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items: op.items }),
-          });
-          if (res.status >= 500) {
-            throw new OfflineNetworkError(`Server returned HTTP ${res.status}`);
-          }
-          if (res.ok) {
-            const updated = (await res.json()) as ShoppingList;
-            await saveCachedShoppingList(updated);
-            // Map offline temporary IDs to newly created server item IDs by name
-            const serverItems = updated.items ?? [];
-            for (const temp of op.tempItems) {
-              const lower = temp.name.trim().toLowerCase();
-              const match = [...serverItems]
-                .reverse()
-                .find((it) => it.name.trim().toLowerCase() === lower);
-              if (match) {
-                tempIdMap.set(temp.tempId, match.id);
+        if (!startedSync) {
+          startedSync = true;
+          updateStatus({ syncing: true, syncError: null });
+        }
+
+        for (const op of ops) {
+          if (op.seq === undefined) continue;
+
+          if (op.kind === "add_items") {
+            const res = await syncFetch(
+              `/api/shopping-lists/${op.listId}/items`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items: op.items }),
+              },
+            );
+            if (res.status >= 500) {
+              throw new OfflineNetworkError(
+                `Server returned HTTP ${res.status}`,
+              );
+            }
+            if (res.ok) {
+              const updated = (await res.json()) as ShoppingList;
+              await saveCachedShoppingList(updated);
+              // Map offline temporary IDs to newly created server item IDs by name
+              const serverItems = updated.items ?? [];
+              for (const temp of op.tempItems) {
+                const lower = temp.name.trim().toLowerCase();
+                const match = [...serverItems]
+                  .reverse()
+                  .find((it) => it.name.trim().toLowerCase() === lower);
+                if (match) {
+                  tempIdMap.set(temp.tempId, match.id);
+                }
               }
             }
-          }
-          // Delete op on success or unrecoverable 4xx (e.g., list deleted on server)
-          await deleteOutboxOp(op.seq);
-          flushedAny = true;
-        } else if (op.kind === "patch_item") {
-          const resolvedId =
-            op.itemId < 0 ? tempIdMap.get(op.itemId) : op.itemId;
-          if (!resolvedId) {
+            // Delete op on success or unrecoverable 4xx (e.g., list deleted on server)
             await deleteOutboxOp(op.seq);
-            continue;
-          }
-          const res = await syncFetch(
-            `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(op.patch),
-            },
-          );
-          if (res.status >= 500) {
-            throw new OfflineNetworkError(`Server returned HTTP ${res.status}`);
-          }
-          await deleteOutboxOp(op.seq);
-          flushedAny = true;
-        } else if (op.kind === "delete_item") {
-          const resolvedId =
-            op.itemId < 0 ? tempIdMap.get(op.itemId) : op.itemId;
-          if (!resolvedId) {
+            flushedAny = true;
+          } else if (op.kind === "patch_item") {
+            const resolvedId =
+              op.itemId < 0 ? tempIdMap.get(op.itemId) : op.itemId;
+            if (!resolvedId) {
+              await deleteOutboxOp(op.seq);
+              continue;
+            }
+            const res = await syncFetch(
+              `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
+              {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(op.patch),
+              },
+            );
+            if (res.status >= 500) {
+              throw new OfflineNetworkError(
+                `Server returned HTTP ${res.status}`,
+              );
+            }
             await deleteOutboxOp(op.seq);
-            continue;
+            flushedAny = true;
+          } else if (op.kind === "delete_item") {
+            const resolvedId =
+              op.itemId < 0 ? tempIdMap.get(op.itemId) : op.itemId;
+            if (!resolvedId) {
+              await deleteOutboxOp(op.seq);
+              continue;
+            }
+            const res = await syncFetch(
+              `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
+              { method: "DELETE" },
+            );
+            if (res.status >= 500) {
+              throw new OfflineNetworkError(
+                `Server returned HTTP ${res.status}`,
+              );
+            }
+            await deleteOutboxOp(op.seq);
+            flushedAny = true;
+          } else if (op.kind === "clear_checked") {
+            const res = await syncFetch(
+              `/api/shopping-lists/${op.listId}/checked`,
+              {
+                method: "DELETE",
+              },
+            );
+            if (res.status >= 500) {
+              throw new OfflineNetworkError(
+                `Server returned HTTP ${res.status}`,
+              );
+            }
+            if (res.ok) {
+              const updated = (await res.json()) as ShoppingList;
+              await saveCachedShoppingList(updated);
+            }
+            await deleteOutboxOp(op.seq);
+            flushedAny = true;
+          } else if (op.kind === "delete_list") {
+            const res = await syncFetch(`/api/shopping-lists/${op.listId}`, {
+              method: "DELETE",
+            });
+            if (res.status >= 500) {
+              throw new OfflineNetworkError(
+                `Server returned HTTP ${res.status}`,
+              );
+            }
+            await deleteCachedShoppingList(op.listId);
+            await deleteOutboxOp(op.seq);
+            flushedAny = true;
           }
-          const res = await syncFetch(
-            `/api/shopping-lists/${op.listId}/items/${resolvedId}`,
-            { method: "DELETE" },
-          );
-          if (res.status >= 500) {
-            throw new OfflineNetworkError(`Server returned HTTP ${res.status}`);
-          }
-          await deleteOutboxOp(op.seq);
-          flushedAny = true;
-        } else if (op.kind === "clear_checked") {
-          const res = await syncFetch(`/api/shopping-lists/${op.listId}/checked`, {
-            method: "DELETE",
-          });
-          if (res.status >= 500) {
-            throw new OfflineNetworkError(`Server returned HTTP ${res.status}`);
-          }
-          if (res.ok) {
-            const updated = (await res.json()) as ShoppingList;
-            await saveCachedShoppingList(updated);
-          }
-          await deleteOutboxOp(op.seq);
-          flushedAny = true;
         }
       }
 
-      markApiReachable();
+      if (startedSync) {
+        markApiReachable();
+      }
       await refreshPendingCount();
       if (flushedAny && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("kiln:synced"));
@@ -236,7 +271,9 @@ export function flushOutbox(): Promise<boolean> {
       await refreshPendingCount();
       return false;
     } finally {
-      updateStatus({ syncing: false });
+      if (startedSync) {
+        updateStatus({ syncing: false });
+      }
       activeFlush = null;
     }
   })();
@@ -287,7 +324,29 @@ export function syncAllForOffline(): Promise<boolean> {
       const flushed = await flushOutbox();
       if (!flushed) return false;
 
-      // 1. Recipes summary + full detail for every recipe (so Cook Mode works offline!)
+      // 1. Shopping lists summary + full items right after outbox flush (only overwrite if outbox is still empty)
+      const listsRes = await syncFetch("/api/shopping-lists");
+      if (listsRes.ok) {
+        const lists = (await listsRes.json()) as ShoppingList[];
+        if ((await listOutboxOps()).length === 0) {
+          await saveCachedShoppingListsSummary(lists);
+        }
+        await Promise.all(
+          lists.map(async (sl) => {
+            try {
+              const detailRes = await syncFetch(`/api/shopping-lists/${sl.id}`);
+              if (detailRes.ok && (await listOutboxOps()).length === 0) {
+                const full = (await detailRes.json()) as ShoppingList;
+                await saveCachedShoppingList(full);
+              }
+            } catch {
+              // Skip individual failures
+            }
+          }),
+        );
+      }
+
+      // 2. Recipes summary + full detail for every recipe (so Cook Mode works offline!)
       const recipesRes = await syncFetch("/api/recipes");
       if (!recipesRes.ok) {
         throw new OfflineNetworkError(`HTTP ${recipesRes.status}`);
@@ -312,26 +371,6 @@ export function syncAllForOffline(): Promise<boolean> {
         }),
       );
       void warmImageCache(imageUrls);
-
-      // 2. Shopping lists summary + full items for every list
-      const listsRes = await syncFetch("/api/shopping-lists");
-      if (listsRes.ok) {
-        const lists = (await listsRes.json()) as ShoppingList[];
-        await saveCachedShoppingListsSummary(lists);
-        await Promise.all(
-          lists.map(async (sl) => {
-            try {
-              const detailRes = await syncFetch(`/api/shopping-lists/${sl.id}`);
-              if (detailRes.ok) {
-                const full = (await detailRes.json()) as ShoppingList;
-                await saveCachedShoppingList(full);
-              }
-            } catch {
-              // Skip individual failures
-            }
-          }),
-        );
-      }
 
       // 3. Pantry staples
       const staplesRes = await syncFetch("/api/pantry-staples");

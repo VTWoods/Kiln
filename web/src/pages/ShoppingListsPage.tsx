@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ManagePantryStaplesModal from "../components/ManagePantryStaplesModal";
+import ModalSheet from "../components/ModalSheet";
 import {
   getCachedShoppingList,
   getCachedShoppingLists,
@@ -28,6 +29,9 @@ import {
   type ShoppingList,
   type ShoppingListItem,
 } from "../types/shoppingList";
+
+const CHECK_FADE_DELAY_MS = 2500;
+const CHECK_MOVE_DELAY_MS = 3000;
 
 export default function ShoppingListsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -96,7 +100,7 @@ export default function ShoppingListsPage() {
       return next;
     });
   };
-  // Items just checked off: grayed out in place for 5s, then faded out before moving to the bottom
+  // Items just checked off: grayed out in place for 2.5s, then faded out over 500ms before moving to the bottom at 3s
   const [pendingCheckIds, setPendingCheckIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -106,6 +110,10 @@ export default function ShoppingListsPage() {
   const checkTimersRef = useRef<
     Map<number, { fadeTimer: number; moveTimer: number }>
   >(new Map());
+  const [completePromptList, setCompletePromptList] =
+    useState<ShoppingList | null>(null);
+  const [deletingPromptList, setDeletingPromptList] = useState(false);
+  const shouldPromptCompleteRef = useRef<number | null>(null);
 
   const clearItemTimers = useCallback((itemId: number) => {
     const existing = checkTimersRef.current.get(itemId);
@@ -249,8 +257,26 @@ export default function ShoppingListsPage() {
     return () => window.removeEventListener("kiln:synced", onSynced);
   }, [activeList?.id, loadActiveList]);
 
+  // Prompt to delete the list once all items are checked and pending check animations finish
+  useEffect(() => {
+    if (
+      !activeList ||
+      shouldPromptCompleteRef.current !== activeList.id ||
+      pendingCheckIds.size > 0
+    ) {
+      return;
+    }
+    const listItems = activeList.items ?? [];
+    if (listItems.length > 0 && listItems.every((it) => it.checked)) {
+      shouldPromptCompleteRef.current = null;
+      setCompletePromptList(activeList);
+    }
+  }, [activeList, pendingCheckIds]);
+
   const handleSelectList = (id: number) => {
     clearAllCheckTimers();
+    shouldPromptCompleteRef.current = null;
+    setCompletePromptList(null);
     setOpenMenuItemId(null);
     setListMenuOpen(false);
     setCollapsedGroups(new Set(["checked"]));
@@ -267,6 +293,8 @@ export default function ShoppingListsPage() {
     setError(null);
     try {
       const created = await createShoppingList(trimmed);
+      shouldPromptCompleteRef.current = null;
+      setCompletePromptList(null);
       setLists((prev) => [...prev, created]);
       setActiveList(created);
       setOpenMenuItemId(null);
@@ -284,15 +312,10 @@ export default function ShoppingListsPage() {
     }
   };
 
-  const handleDeleteList = async (list: ShoppingList) => {
-    if (
-      !window.confirm(
-        `Delete "${list.name}" and all of its items? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+  const performDeleteList = async (list: ShoppingList): Promise<boolean> => {
     setError(null);
+    clearAllCheckTimers();
+    shouldPromptCompleteRef.current = null;
     setListMenuOpen(false);
     setOpenMenuItemId(null);
     try {
@@ -307,10 +330,36 @@ export default function ShoppingListsPage() {
         setActiveList(null);
         setSearchParams({}, { replace: true });
       }
+      return true;
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Failed to delete shopping list.",
       );
+      return false;
+    }
+  };
+
+  const handleDeleteList = async (list: ShoppingList) => {
+    if (
+      !window.confirm(
+        `Delete "${list.name}" and all of its items? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    await performDeleteList(list);
+  };
+
+  const handleConfirmCompleteDelete = async () => {
+    if (!completePromptList) return;
+    setDeletingPromptList(true);
+    try {
+      const deleted = await performDeleteList(completePromptList);
+      if (deleted) {
+        setCompletePromptList(null);
+      }
+    } finally {
+      setDeletingPromptList(false);
     }
   };
 
@@ -318,6 +367,7 @@ export default function ShoppingListsPage() {
     e.preventDefault();
     if (!activeList || !itemName.trim()) return;
 
+    shouldPromptCompleteRef.current = null;
     setAddingItem(true);
     setError(null);
     try {
@@ -353,8 +403,19 @@ export default function ShoppingListsPage() {
   const handleToggleItem = async (item: ShoppingListItem) => {
     if (!activeList) return;
     const nextChecked = !item.checked;
+    const currentItems = activeList.items ?? [];
+    const willAllBeChecked =
+      nextChecked &&
+      currentItems.length > 0 &&
+      currentItems.every((it) => (it.id === item.id ? true : it.checked));
 
-    // Manage the 5s gray-out -> 500ms fade -> move-to-bottom transition
+    if (willAllBeChecked) {
+      shouldPromptCompleteRef.current = activeList.id;
+    } else if (shouldPromptCompleteRef.current === activeList.id) {
+      shouldPromptCompleteRef.current = null;
+    }
+
+    // Manage the 2.5s gray-out -> 500ms fade -> move-to-bottom at 3s transition
     clearItemTimers(item.id);
     if (nextChecked) {
       setPendingCheckIds((prev) => {
@@ -368,10 +429,10 @@ export default function ShoppingListsPage() {
           next.add(item.id);
           return next;
         });
-      }, 5000);
+      }, CHECK_FADE_DELAY_MS);
       const moveTimer = window.setTimeout(() => {
         clearItemTimers(item.id);
-      }, 5500);
+      }, CHECK_MOVE_DELAY_MS);
       checkTimersRef.current.set(item.id, { fadeTimer, moveTimer });
     }
 
@@ -401,6 +462,9 @@ export default function ShoppingListsPage() {
       );
     } catch (err: unknown) {
       clearItemTimers(item.id);
+      if (shouldPromptCompleteRef.current === activeList.id) {
+        shouldPromptCompleteRef.current = null;
+      }
       setError(err instanceof Error ? err.message : "Failed to update item.");
       void loadActiveList(activeList.id);
     }
@@ -411,6 +475,15 @@ export default function ShoppingListsPage() {
     const targetListId = activeList.id;
     const previousActiveList = activeList;
     const previousLists = lists;
+    const currentItems = activeList.items ?? [];
+    const nextItemsAfterDelete = currentItems.filter((it) => it.id !== item.id);
+    if (
+      !item.checked &&
+      nextItemsAfterDelete.length > 0 &&
+      nextItemsAfterDelete.every((it) => it.checked)
+    ) {
+      shouldPromptCompleteRef.current = targetListId;
+    }
 
     clearItemTimers(item.id);
     setError(null);
@@ -444,6 +517,9 @@ export default function ShoppingListsPage() {
     try {
       await deleteShoppingListItem(targetListId, item.id);
     } catch (err: unknown) {
+      if (shouldPromptCompleteRef.current === targetListId) {
+        shouldPromptCompleteRef.current = null;
+      }
       setActiveList((prev) =>
         prev?.id === targetListId ? previousActiveList : prev,
       );
@@ -478,6 +554,7 @@ export default function ShoppingListsPage() {
   const handleClearChecked = async () => {
     if (!activeList) return;
     clearAllCheckTimers();
+    shouldPromptCompleteRef.current = null;
     setError(null);
     try {
       const updated = await clearCheckedShoppingListItems(activeList.id);
@@ -503,7 +580,7 @@ export default function ShoppingListsPage() {
   const items = activeList?.items ?? [];
   const remainingCount = items.filter((i) => !i.checked).length;
   const totalCheckedCount = items.length - remainingCount;
-  // Keep recently checked items in place during their 5s gray-out + fade transition
+  // Keep recently checked items in place during their 3s gray-out + fade transition
   const uncheckedItems = items.filter(
     (i) => !i.checked || pendingCheckIds.has(i.id),
   );
@@ -1196,6 +1273,42 @@ export default function ShoppingListsPage() {
       )}
       {showStaplesModal && (
         <ManagePantryStaplesModal onClose={() => setShowStaplesModal(false)} />
+      )}
+      {completePromptList && (
+        <ModalSheet
+          onClose={() => setCompletePromptList(null)}
+          closeDisabled={deletingPromptList}
+          title="All items checked off"
+          maxWidthClass="sm:max-w-md"
+          footer={
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={deletingPromptList}
+                onClick={() => setCompletePromptList(null)}
+                className="min-h-[44px] w-full rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-60 sm:min-h-[40px] sm:w-auto"
+              >
+                Keep list
+              </button>
+              <button
+                type="button"
+                disabled={deletingPromptList}
+                onClick={() => void handleConfirmCompleteDelete()}
+                className="min-h-[44px] w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-red-700 disabled:opacity-60 sm:min-h-[40px] sm:w-auto"
+              >
+                {deletingPromptList ? "Deleting…" : "Delete list"}
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm leading-relaxed text-stone-600">
+            Every item on{" "}
+            <span className="font-semibold break-words text-stone-900">
+              {completePromptList.name}
+            </span>{" "}
+            is checked off. Would you like to delete this shopping list?
+          </p>
+        </ModalSheet>
       )}
     </section>
   );

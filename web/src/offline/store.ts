@@ -39,6 +39,12 @@ export type OutboxOp =
       kind: "clear_checked";
       listId: number;
       createdAt: string;
+    }
+  | {
+      seq?: number;
+      kind: "delete_list";
+      listId: number;
+      createdAt: string;
     };
 
 interface KilnOfflineDB extends DBSchema {
@@ -114,6 +120,28 @@ function getDb(): Promise<IDBPDatabase<KilnOfflineDB>> {
     });
   }
   return dbPromise;
+}
+
+function resetDb(): void {
+  if (dbPromise) {
+    void dbPromise.then((db) => db.close()).catch(() => {});
+    dbPromise = null;
+  }
+}
+
+async function withDb<T>(
+  fn: (db: IDBPDatabase<KilnOfflineDB>) => Promise<T>,
+): Promise<T> {
+  try {
+    const db = await getDb();
+    return await fn(db);
+  } catch {
+    // Mobile PWAs (especially Android WebAPKs) can invalidate a backgrounded
+    // IndexedDB connection without firing `terminated` first; reopen once.
+    resetDb();
+    const db = await getDb();
+    return await fn(db);
+  }
 }
 
 export class OfflineNetworkError extends Error {
@@ -212,8 +240,7 @@ export async function deleteCachedRecipe(id: number): Promise<void> {
 
 export async function getCachedShoppingLists(): Promise<ShoppingList[]> {
   try {
-    const db = await getDb();
-    const all = await db.getAll("shoppingLists");
+    const all = await withDb((db) => db.getAll("shoppingLists"));
     return all.sort((a, b) => {
       const cmp = (a.created_at || "").localeCompare(b.created_at || "");
       return cmp !== 0 ? cmp : a.id - b.id;
@@ -227,8 +254,7 @@ export async function getCachedShoppingList(
   id: number,
 ): Promise<ShoppingList | null> {
   try {
-    const db = await getDb();
-    return (await db.get("shoppingLists", id)) ?? null;
+    return (await withDb((db) => db.get("shoppingLists", id))) ?? null;
   } catch {
     return null;
   }
@@ -236,8 +262,7 @@ export async function getCachedShoppingList(
 
 export async function saveCachedShoppingList(list: ShoppingList): Promise<void> {
   try {
-    const db = await getDb();
-    await db.put("shoppingLists", list);
+    await withDb((db) => db.put("shoppingLists", list));
   } catch {
     // Ignore
   }
@@ -247,26 +272,27 @@ export async function saveCachedShoppingListsSummary(
   lists: ShoppingList[],
 ): Promise<void> {
   try {
-    const db = await getDb();
-    const tx = db.transaction("shoppingLists", "readwrite");
-    const keepIds = new Set(lists.map((l) => l.id));
-    const existing = await tx.store.getAll();
-    const existingById = new Map(existing.map((l) => [l.id, l]));
+    await withDb(async (db) => {
+      const tx = db.transaction("shoppingLists", "readwrite");
+      const keepIds = new Set(lists.map((l) => l.id));
+      const existing = await tx.store.getAll();
+      const existingById = new Map(existing.map((l) => [l.id, l]));
 
-    for (const old of existing) {
-      if (!keepIds.has(old.id)) {
-        await tx.store.delete(old.id);
+      for (const old of existing) {
+        if (!keepIds.has(old.id)) {
+          await tx.store.delete(old.id);
+        }
       }
-    }
-    for (const summary of lists) {
-      const prev = existingById.get(summary.id);
-      const merged: ShoppingList =
-        prev?.items && !summary.items
-          ? { ...summary, items: prev.items, aisles: prev.aisles }
-          : summary;
-      await tx.store.put(merged);
-    }
-    await tx.done;
+      for (const summary of lists) {
+        const prev = existingById.get(summary.id);
+        const merged: ShoppingList =
+          prev?.items && !summary.items
+            ? { ...summary, items: prev.items, aisles: prev.aisles }
+            : summary;
+        await tx.store.put(merged);
+      }
+      await tx.done;
+    });
   } catch {
     // Ignore
   }
@@ -274,8 +300,7 @@ export async function saveCachedShoppingListsSummary(
 
 export async function deleteCachedShoppingList(id: number): Promise<void> {
   try {
-    const db = await getDb();
-    await db.delete("shoppingLists", id);
+    await withDb((db) => db.delete("shoppingLists", id));
   } catch {
     // Ignore
   }
@@ -336,28 +361,33 @@ export async function saveCachedMealPlanWeek(
 // --- Outbox Queue ---
 
 export async function enqueueOutboxOp(op: OutboxOp): Promise<number> {
-  const db = await getDb();
-  return db.add("outbox", op);
+  return withDb((db) => db.add("outbox", op));
 }
 
 export async function listOutboxOps(): Promise<OutboxOp[]> {
-  try {
-    const db = await getDb();
-    return await db.getAll("outbox");
-  } catch {
-    return [];
-  }
+  return withDb((db) => db.getAll("outbox"));
 }
 
 export async function deleteOutboxOp(seq: number): Promise<void> {
-  const db = await getDb();
-  await db.delete("outbox", seq);
+  await withDb((db) => db.delete("outbox", seq));
+}
+
+export async function deleteOutboxOpsForList(listId: number): Promise<void> {
+  await withDb(async (db) => {
+    const tx = db.transaction("outbox", "readwrite");
+    const all = await tx.store.getAll();
+    for (const op of all) {
+      if (op.listId === listId && op.seq !== undefined) {
+        await tx.store.delete(op.seq);
+      }
+    }
+    await tx.done;
+  });
 }
 
 export async function countOutboxOps(): Promise<number> {
   try {
-    const db = await getDb();
-    return await db.count("outbox");
+    return await withDb((db) => db.count("outbox"));
   } catch {
     return 0;
   }
