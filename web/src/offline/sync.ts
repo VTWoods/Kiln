@@ -428,22 +428,33 @@ export function syncAllForOffline(): Promise<boolean> {
   return activeFullSync;
 }
 
-async function probeKilnHealth(): Promise<boolean> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
+let activeProbe: Promise<boolean> | null = null;
+
+export function probeKilnHealth(): Promise<boolean> {
+  if (activeProbe) return activeProbe;
+
+  activeProbe = (async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      markApiOffline();
+      return false;
+    }
+    try {
+      const res = await syncFetch("/api/health", { cache: "no-store" }, 2000);
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (res.ok && !contentType.includes("text/html")) {
+        markApiReachable();
+        return true;
+      }
+    } catch {
+      // Still unreachable
+    }
     markApiOffline();
     return false;
-  }
-  try {
-    const res = await syncFetch("/api/health", undefined, 2000);
-    if (res.ok) {
-      markApiReachable();
-      return true;
-    }
-  } catch {
-    // Still unreachable
-  }
-  markApiOffline();
-  return false;
+  })().finally(() => {
+    activeProbe = null;
+  });
+
+  return activeProbe;
 }
 
 let initialized = false;
@@ -458,6 +469,22 @@ export function initOfflineSync(): void {
     },
   );
 
+  const checkConnectivityOnResume = () => {
+    if (!navigator.onLine) {
+      markApiOffline();
+      return;
+    }
+    const wasOffline = !status.online;
+    void probeKilnHealth().then((ok) => {
+      if (!ok) return;
+      if (wasOffline) {
+        void syncAllForOffline();
+      } else {
+        void flushOutbox();
+      }
+    });
+  };
+
   window.addEventListener("online", () => {
     lastOfflineAt = 0;
     void probeKilnHealth().then((ok) => {
@@ -470,14 +497,14 @@ export function initOfflineSync(): void {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && navigator.onLine) {
-      if (!status.online) {
-        void probeKilnHealth().then((ok) => {
-          if (ok) void syncAllForOffline();
-        });
-      } else {
-        void flushOutbox();
-      }
+    if (document.visibilityState === "visible") {
+      checkConnectivityOnResume();
+    }
+  });
+
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      checkConnectivityOnResume();
     }
   });
 

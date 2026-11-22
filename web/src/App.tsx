@@ -4,6 +4,7 @@ import { useBackToClose } from "./hooks/useBackToClose";
 import { usePwaBackGuard } from "./hooks/usePwaBackGuard";
 import {
   initOfflineSync,
+  probeKilnHealth,
   syncAllForOffline,
   useOfflineStatus,
   type OfflineStatus,
@@ -29,9 +30,9 @@ export default function App() {
 
   useEffect(() => {
     initOfflineSync();
-    if (navigator.onLine) {
-      void syncAllForOffline();
-    }
+    void probeKilnHealth().then((ok) => {
+      if (ok) void syncAllForOffline();
+    });
   }, []);
 
   useEffect(() => {
