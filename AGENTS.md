@@ -86,13 +86,13 @@ npm --prefix web run build
 
 # Run Django (:8091) and Vite (:8090) as TWO SEPARATE background daemon tasks (preferred for AI agents)
 # Task 1 (Django backend on 0.0.0.0:8091):
-PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev-api
+PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev-api
 
 # Task 2 (Vite frontend on 0.0.0.0:8090, HMR over wss:// behind Caddy):
 VITE_HMR_CLIENT_PORT=443 make dev-web
 
 # (For manual single-terminal dev, you can also run both together:)
-PUBLIC_BASE_URL=https://kiln.woodsfamily.net make dev
+PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev
 
 # Normalize legacy recipe ingredients (and optionally re-merge shopping lists)
 ./.venv/bin/python3 manage.py normalize_recipes --dry-run
