@@ -110,8 +110,9 @@ PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev
 ## 4. Architecture Conventions
 
 ### Keep Swappable Service Interfaces Intact
-Four core capabilities sit behind ABCs so implementations can be swapped or stubbed cleanly in tests:
+Five core capabilities sit behind ABCs so implementations can be swapped or stubbed cleanly in tests:
 - `RecipeImporter` ([api/services/importer.py](api/services/importer.py))
+- `PhotoRecipeExtractor` ([api/services/photo_extractor.py](api/services/photo_extractor.py))
 - `IngredientParser` ([api/services/ingredient_parser.py](api/services/ingredient_parser.py))
 - `AisleCategorizer` ([api/services/aisle_categorizer.py](api/services/aisle_categorizer.py))
 - `Caster` ([api/services/caster.py](api/services/caster.py))

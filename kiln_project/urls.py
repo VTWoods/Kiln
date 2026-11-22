@@ -11,6 +11,7 @@ urlpatterns = [
     path("api/health", health.health_view),
     # Recipes & Importer
     path("api/recipes/import-preview", recipes.import_preview_view),
+    path("api/recipes/import-photo", recipes.import_photo_view),
     path("api/recipes/bookmarklet", recipes.bookmarklet_import_view),
     path("api/recipes/import-draft/<str:token>", recipes.import_draft_view),
     path("api/ingredients/parse", recipes.parse_ingredients_view),

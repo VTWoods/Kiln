@@ -102,8 +102,11 @@ docker compose -f examples/docker-compose.yml up -d --build
 | `IMAGES_DIR`         | `./data/images`    | Cached recipe images directory                  |
 | `STATIC_DIR`         | `./web/dist`       | Built React static files directory              |
 | `PUBLIC_BASE_URL`    | *(auto-detected)*  | Override URL origin sent to Nest Hub when casting |
-| `DJANGO_DEBUG`       | `false`            | Enable Django debug mode (`true` in `dev-api`)  |
-| `DJANGO_SECRET_KEY`  | *(dev default)*    | Secret key for Django sessions/admin            |
+| `DJANGO_DEBUG`          | `false`                 | Enable Django debug mode (`true` in `dev-api`)                        |
+| `DJANGO_SECRET_KEY`     | *(dev default)*         | Secret key for Django sessions/admin                                  |
+| `GEMINI_API_KEY`        | *(unset)*               | Optional Gemini API key to enable photo-to-recipe extraction          |
+| `GEMINI_MODEL`          | `gemini-4-hydrogen`     | Primary Gemini model used for photo-to-recipe extraction              |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.5-flash-lite` | Automatic fallback model when the primary model hits quota/rate limit |
 
 ## Testing
 

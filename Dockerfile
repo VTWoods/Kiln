@@ -42,4 +42,4 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 EXPOSE 8080
 VOLUME ["/data"]
 
-ENTRYPOINT ["sh", "-c", "python3 manage.py migrate --fake-initial && exec gunicorn kiln_project.wsgi:application --bind ${HOST}:${PORT} --workers 2 --threads 4"]
+ENTRYPOINT ["sh", "-c", "python3 manage.py migrate --fake-initial && exec gunicorn kiln_project.wsgi:application --bind ${HOST}:${PORT} --workers 2 --threads 4 --timeout 120"]

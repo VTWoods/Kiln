@@ -22,9 +22,14 @@ from api.services.images import ImageStore, is_local_image_url
 from api.services.import_drafts import draft_store
 from api.services.ingredient_parser import parse_ingredient
 from api.services.pantry_staples import get_pantry_staple_keys, is_ingredient_staple
+from api.services.photo_extractor import (
+    MAX_PHOTO_IMPORT_FILES,
+    PhotoExtractorUnavailableError,
+)
 from api.views import (
     get_image_store,
     get_importer,
+    get_photo_extractor,
     iso_timestamp,
     parse_json_body,
     parse_positive_int,
@@ -211,6 +216,65 @@ def import_preview_view(request: HttpRequest) -> JsonResponse:
         return _importer_error_response(exc)
 
     return JsonResponse(preview.to_dict(), status=200)
+
+
+@csrf_exempt
+def import_photo_view(request: HttpRequest) -> JsonResponse:
+    """Extract a recipe preview from 1–3 uploaded photos using Gemini."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    uploaded_files = list(request.FILES.getlist("images"))
+    if not uploaded_files:
+        single = request.FILES.get("image") or request.FILES.get("file")
+        if single is not None:
+            uploaded_files = [single]
+
+    if not uploaded_files:
+        return JsonResponse(
+            {"error": "at least one recipe photo is required"}, status=400
+        )
+    if len(uploaded_files) > MAX_PHOTO_IMPORT_FILES:
+        return JsonResponse(
+            {"error": f"upload at most {MAX_PHOTO_IMPORT_FILES} photos at a time"},
+            status=400,
+        )
+
+    image_payloads: list[tuple[bytes, str]] = []
+    for idx, uploaded in enumerate(uploaded_files, start=1):
+        if uploaded.size is not None and uploaded.size > DEFAULT_MAX_IMAGE_BYTES:
+            return JsonResponse(
+                {"error": f"photo #{idx} exceeds 10 MB limit"}, status=400
+            )
+        raw_bytes = uploaded.read(DEFAULT_MAX_IMAGE_BYTES + 1)
+        if len(raw_bytes) > DEFAULT_MAX_IMAGE_BYTES:
+            return JsonResponse(
+                {"error": f"photo #{idx} exceeds 10 MB limit"}, status=400
+            )
+        content_type = getattr(uploaded, "content_type", "") or ""
+        image_payloads.append((raw_bytes, content_type))
+
+    hint = str(request.POST.get("hint") or "").strip()[:500]
+
+    try:
+        result = get_photo_extractor().extract(image_payloads, hint=hint)
+    except PhotoExtractorUnavailableError as exc:
+        return JsonResponse({"error": str(exc)}, status=503)
+    except InvalidURLError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except ParseFailedError as exc:
+        return JsonResponse({"error": str(exc)}, status=422)
+    except FetchFailedError as exc:
+        logger.warning("photo recipe extraction error: %s", exc)
+        return JsonResponse({"error": str(exc)}, status=502)
+    except Exception as exc:
+        logger.exception("unexpected photo recipe extraction error")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+    payload = result.recipe.to_dict()
+    payload["model_used"] = result.model_used
+    payload["fell_back"] = result.fell_back
+    return JsonResponse(payload, status=200)
 
 
 @csrf_exempt

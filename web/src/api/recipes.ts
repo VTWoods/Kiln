@@ -184,6 +184,99 @@ export async function parseIngredientLines(
   }
 }
 
+export type PhotoImportedRecipe = ImportedRecipe & {
+  model_used?: string;
+  fell_back?: boolean;
+};
+
+async function compressPhotoForExtraction(
+  file: File,
+  maxDim = 1600,
+): Promise<File> {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return file;
+  }
+  // Skip tiny files that are already lightweight
+  if (file.size > 0 && file.size <= 350_000) {
+    return file;
+  }
+
+  let objectUrl: string | null = null;
+  try {
+    objectUrl = URL.createObjectURL(file);
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("image decode failed"));
+      el.src = objectUrl!;
+    });
+
+    const { naturalWidth: w, naturalHeight: h } = img;
+    if (!w || !h) return file;
+
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    const targetW = Math.max(1, Math.round(w * scale));
+    const targetH = Math.max(1, Math.round(h * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.82),
+    );
+    if (!blob || blob.size === 0 || (scale === 1 && blob.size >= file.size)) {
+      return file;
+    }
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "recipe-photo";
+    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return file;
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+}
+
+export async function importRecipeFromPhotos(
+  files: File[],
+  hint?: string,
+): Promise<PhotoImportedRecipe> {
+  const prepared = await Promise.all(
+    files.map((file) => compressPhotoForExtraction(file)),
+  );
+  const form = new FormData();
+  for (const file of prepared) {
+    form.append("images", file);
+  }
+  if (hint && hint.trim()) {
+    form.append("hint", hint.trim());
+  }
+
+  try {
+    const res = await apiFetch(
+      "/api/recipes/import-photo",
+      {
+        method: "POST",
+        body: form,
+      },
+      { timeoutMs: 115_000, allow502AppError: true, bypassCircuitBreaker: true },
+    );
+    return parseJsonOrThrow<PhotoImportedRecipe>(res);
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new Error(
+        "Extracting recipes from photos requires a connection to your Kiln server.",
+      );
+    }
+    throw err;
+  }
+}
+
 export async function uploadRecipeImage(file: File): Promise<string> {
   const form = new FormData();
   form.append("image", file);

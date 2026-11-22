@@ -11,6 +11,7 @@ from api.services.caster import Caster, PyChromecastCaster
 from api.services.fetcher import SafeFetcher
 from api.services.images import ImageStore
 from api.services.importer import RecipeImporter, RecipeScrapersImporter
+from api.services.photo_extractor import GeminiPhotoRecipeExtractor, PhotoRecipeExtractor
 
 
 def parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -51,3 +52,11 @@ def get_image_store() -> ImageStore:
 
 def get_caster() -> Caster:
     return PyChromecastCaster(settings.PUBLIC_BASE_URL)
+
+
+def get_photo_extractor() -> PhotoRecipeExtractor:
+    return GeminiPhotoRecipeExtractor(
+        api_key=settings.GEMINI_API_KEY,
+        model=settings.GEMINI_MODEL,
+        fallback_model=settings.GEMINI_FALLBACK_MODEL,
+    )

@@ -85,6 +85,17 @@ STATIC_DIST_DIR = Path(
 )
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
 
+# Optional Gemini API config for photo-to-recipe extraction
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = (
+    os.environ.get("GEMINI_MODEL", "gemini-4-hydrogen").strip()
+    or "gemini-4-hydrogen"
+)
+GEMINI_FALLBACK_MODEL = (
+    os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite").strip()
+    or "gemini-3.5-flash-lite"
+)
+
 _raw_csrf_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "")
 CSRF_TRUSTED_ORIGINS = [
     origin.strip().rstrip("/")

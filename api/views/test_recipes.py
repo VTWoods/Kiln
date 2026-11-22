@@ -16,6 +16,11 @@ from api.services.fetcher import (
 from api.services.images import ImageStore
 from api.services.import_drafts import draft_store
 from api.services.importer import ImportedIngredient, ImportedRecipe, RecipeImporter
+from api.services.photo_extractor import (
+    PhotoExtractionResult,
+    PhotoExtractorUnavailableError,
+    PhotoRecipeExtractor,
+)
 from api.testing_utils import PNG_1X1, start_fixture_server
 
 
@@ -314,3 +319,93 @@ class RecipesViewTests(TestCase):
                 self.assertEqual(created["source_url"], "")
                 self.assertEqual(created["image_url"], uploaded_url)
                 self.assertEqual(created["ingredient_names"], ["flour"])
+
+    def test_import_photo_endpoint_multi_photo_and_errors(self) -> None:
+        preview = ImportedRecipe(
+            title="Handwritten Chili",
+            description="Card scan",
+            instructions="Brown beef.\n\nSimmer.",
+            servings=6,
+            prep_minutes=15,
+            cook_minutes=45,
+            source_url="",
+            image_url="",
+            candidate_images=[],
+            ingredients=[ImportedIngredient("1 lb beef", "1", "pound", "beef")],
+        )
+
+        class _StubPhotoExtractor(PhotoRecipeExtractor):
+            def __init__(
+                self,
+                result: PhotoExtractionResult | None = None,
+                err: Exception | None = None,
+            ) -> None:
+                self._result = result
+                self._err = err
+                self.received_count = 0
+                self.received_hint = ""
+
+            def extract(
+                self, images: list[tuple[bytes, str]], *, hint: str = ""
+            ) -> PhotoExtractionResult:
+                self.received_count = len(images)
+                self.received_hint = hint
+                if self._err is not None:
+                    raise self._err
+                assert self._result is not None
+                return self._result
+
+        # Reject missing files
+        missing = self.client.post("/api/recipes/import-photo")
+        self.assertEqual(missing.status_code, 400)
+
+        # Reject > 3 photos
+        too_many = [
+            SimpleUploadedFile(f"p{i}.png", PNG_1X1, content_type="image/png")
+            for i in range(4)
+        ]
+        over = self.client.post("/api/recipes/import-photo", {"images": too_many})
+        self.assertEqual(over.status_code, 400)
+
+        # Unconfigured API key -> 503
+        unavail = _StubPhotoExtractor(
+            err=PhotoExtractorUnavailableError("GEMINI_API_KEY missing")
+        )
+        with patch("api.views.recipes.get_photo_extractor", return_value=unavail):
+            res_503 = self.client.post(
+                "/api/recipes/import-photo",
+                {
+                    "images": [
+                        SimpleUploadedFile("p1.png", PNG_1X1, content_type="image/png")
+                    ]
+                },
+            )
+        self.assertEqual(res_503.status_code, 503)
+
+        # Multi-photo success (2 pages + hint + fallback metadata)
+        stub = _StubPhotoExtractor(
+            result=PhotoExtractionResult(
+                recipe=preview,
+                model_used="gemini-3.5-flash-lite",
+                fell_back=True,
+            )
+        )
+        with patch("api.views.recipes.get_photo_extractor", return_value=stub):
+            res_ok = self.client.post(
+                "/api/recipes/import-photo",
+                {
+                    "images": [
+                        SimpleUploadedFile("page1.png", PNG_1X1, content_type="image/png"),
+                        SimpleUploadedFile("page2.png", PNG_1X1, content_type="image/png"),
+                    ],
+                    "hint": "Use the chili recipe on page 2",
+                },
+            )
+        self.assertEqual(res_ok.status_code, 200)
+        body = res_ok.json()
+        self.assertEqual(body["title"], "Handwritten Chili")
+        self.assertEqual(body["image_url"], "")
+        self.assertEqual(body["model_used"], "gemini-3.5-flash-lite")
+        self.assertTrue(body["fell_back"])
+        self.assertEqual(stub.received_count, 2)
+        self.assertEqual(stub.received_hint, "Use the chili recipe on page 2")

@@ -27,7 +27,7 @@ build-web:
 build: build-web
 
 run: build-web migrate
-	.venv/bin/gunicorn kiln_project.wsgi:application --bind $(HOST):$(PORT) --workers 2 --threads 4
+	.venv/bin/gunicorn kiln_project.wsgi:application --bind $(HOST):$(PORT) --workers 2 --threads 4 --timeout 120
 
 dev-api: migrate
 	DJANGO_DEBUG=true $(PYTHON) manage.py runserver $(HOST):$(API_PORT)

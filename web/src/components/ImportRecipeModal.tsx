@@ -8,6 +8,7 @@ import {
 import {
   ApiError,
   createRecipe,
+  importRecipeFromPhotos,
   importRecipePreview,
   parseIngredientLines,
   updateRecipe,
@@ -33,8 +34,11 @@ type Props = {
 };
 
 type Step = "source" | "preview";
-type SourceMode = "url" | "html" | "bookmarklet";
+type SourceMode = "url" | "photo" | "html" | "bookmarklet";
 type EditableIngredient = IngredientInput & { raw?: string };
+type QueuedPhoto = { id: string; file: File; previewUrl: string };
+
+const MAX_IMPORT_PHOTOS = 3;
 
 const EMPTY_INGREDIENT: EditableIngredient = {
   quantity: "",
@@ -96,6 +100,15 @@ export default function ImportRecipeModal({
   );
   const autoFetchedRef = useRef(false);
   const [htmlInput, setHtmlInput] = useState("");
+  const [queuedPhotos, setQueuedPhotos] = useState<QueuedPhoto[]>([]);
+  const [photoHint, setPhotoHint] = useState("");
+  const [extractedMeta, setExtractedMeta] = useState<{
+    modelUsed: string;
+    fellBack: boolean;
+  } | null>(null);
+  const queuedPhotosRef = useRef<QueuedPhoto[]>([]);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -201,6 +214,93 @@ export default function ImportRecipeModal({
     }
   }, [bookmarkletCode, sourceMode, step]);
 
+  useEffect(() => {
+    queuedPhotosRef.current = queuedPhotos;
+  }, [queuedPhotos]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of queuedPhotosRef.current) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+    };
+  }, []);
+
+  const handleAddImportPhotos = (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+
+    setError(null);
+    setQueuedPhotos((prev) => {
+      const remaining = MAX_IMPORT_PHOTOS - prev.length;
+      if (remaining <= 0) {
+        setError(`You can attach up to ${MAX_IMPORT_PHOTOS} photos at a time.`);
+        return prev;
+      }
+      const toAdd = picked.slice(0, remaining);
+      if (picked.length > remaining) {
+        setError(
+          `Only the first ${MAX_IMPORT_PHOTOS} photos were kept (maximum ${MAX_IMPORT_PHOTOS} pages).`,
+        );
+      }
+      const next = [
+        ...prev,
+        ...toAdd.map((file, i) => ({
+          id: `${Date.now()}-${i}-${file.name}`,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        })),
+      ];
+      return next;
+    });
+  };
+
+  const handleRemoveQueuedPhoto = (id: string) => {
+    setQueuedPhotos((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((p) => p.id !== id);
+    });
+  };
+
+  const handleExtractFromPhotos = async (e: FormEvent) => {
+    e.preventDefault();
+    if (queuedPhotos.length === 0) {
+      setError("Take or choose at least one recipe photo first.");
+      return;
+    }
+
+    setError(null);
+    setWasBlocked(false);
+    setFetching(true);
+    try {
+      const preview = await importRecipeFromPhotos(
+        queuedPhotos.map((p) => p.file),
+        photoHint,
+      );
+      setExtractedMeta(
+        preview.model_used
+          ? {
+              modelUsed: preview.model_used,
+              fellBack: Boolean(preview.fell_back),
+            }
+          : null,
+      );
+      applyPreview(preview);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to extract recipe from photo.",
+      );
+    } finally {
+      setFetching(false);
+    }
+  };
+
   const applyPreview = (preview: ImportedRecipe) => {
     setTitle(preview.title || "");
     setDescription(preview.description || "");
@@ -234,6 +334,7 @@ export default function ImportRecipeModal({
   const openManualEntry = () => {
     setError(null);
     setWasBlocked(false);
+    setExtractedMeta(null);
     setIsManual(true);
     setSourceUrl("");
     setCandidateImages([]);
@@ -313,6 +414,7 @@ export default function ImportRecipeModal({
     setFetching(true);
     try {
       const preview = await importRecipePreview(targetUrl, html);
+      setExtractedMeta(null);
       applyPreview(preview);
     } catch (err: unknown) {
       setWasBlocked(err instanceof ApiError && err.blocked);
@@ -452,17 +554,19 @@ export default function ImportRecipeModal({
   const modalSubtitle = isEditing
     ? "Update recipe details, photo, ingredients, or instructions."
     : step === "source"
-      ? "Import from a URL, enter one manually, paste HTML, or use the bookmarklet."
+      ? "Import from a URL or photo, enter one manually, paste HTML, or use the bookmarklet."
       : isManual
         ? "Enter your recipe details below — no URL needed."
-        : "Pick a photo and review the extracted details before saving.";
+        : "Review the extracted details and optionally add a dish photo before saving.";
 
   const formSubmit =
     step === "preview"
       ? handleSave
       : sourceMode === "bookmarklet"
         ? undefined
-        : handleFetch;
+        : sourceMode === "photo"
+          ? handleExtractFromPhotos
+          : handleFetch;
 
   const modalFooter =
     step === "source" ? (
@@ -488,14 +592,22 @@ export default function ImportRecipeModal({
           </button>
           <button
             type="submit"
-            disabled={fetching}
+            disabled={
+              fetching || (sourceMode === "photo" && queuedPhotos.length === 0)
+            }
             className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60 sm:flex-initial"
           >
             {fetching ? (
               <>
                 <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                {sourceMode === "html" ? "Parsing HTML…" : "Fetching recipe…"}
+                {sourceMode === "photo"
+                  ? "Reading recipe with Gemini…"
+                  : sourceMode === "html"
+                    ? "Parsing HTML…"
+                    : "Fetching recipe…"}
               </>
+            ) : sourceMode === "photo" ? (
+              "Extract Recipe"
             ) : sourceMode === "html" ? (
               "Parse HTML Preview"
             ) : (
@@ -568,7 +680,7 @@ export default function ImportRecipeModal({
       {step === "source" ? (
         <div className="space-y-4">
           {/* Mode Tabs */}
-          <div className="grid grid-cols-2 gap-1.5 border-b border-stone-200 pb-3 sm:flex sm:items-center sm:gap-1">
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-stone-200 pb-3 sm:gap-1">
             <button
               type="button"
               onClick={() => {
@@ -579,6 +691,17 @@ export default function ImportRecipeModal({
               className={tabClass("url")}
             >
               From URL
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSourceMode("photo");
+                setError(null);
+                setWasBlocked(false);
+              }}
+              className={tabClass("photo")}
+            >
+              From Photo
             </button>
             <button
               type="button"
@@ -611,7 +734,118 @@ export default function ImportRecipeModal({
             </button>
           </div>
 
-          {sourceMode === "bookmarklet" ? (
+          {sourceMode === "photo" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-stone-600">
+                Snap or upload up to {MAX_IMPORT_PHOTOS} photos of a cookbook
+                page, recipe card, or screenshot. Gemini will extract the title,
+                ingredients, and steps for you to review.
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                <label
+                  className={[
+                    "inline-flex min-h-[44px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900 shadow-2xs transition-colors hover:bg-amber-100 sm:flex-initial",
+                    fetching || queuedPhotos.length >= MAX_IMPORT_PHOTOS
+                      ? "pointer-events-none opacity-50"
+                      : "",
+                  ].join(" ")}
+                >
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleAddImportPhotos}
+                    disabled={
+                      fetching || queuedPhotos.length >= MAX_IMPORT_PHOTOS
+                    }
+                    className="sr-only"
+                  />
+                  {queuedPhotos.length === 0 ? "Take Photo" : "+ Take Page"}
+                </label>
+
+                <label
+                  className={[
+                    "inline-flex min-h-[44px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-2xs transition-colors hover:bg-stone-50 sm:flex-initial",
+                    fetching || queuedPhotos.length >= MAX_IMPORT_PHOTOS
+                      ? "pointer-events-none opacity-50"
+                      : "",
+                  ].join(" ")}
+                >
+                  <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleAddImportPhotos}
+                    disabled={
+                      fetching || queuedPhotos.length >= MAX_IMPORT_PHOTOS
+                    }
+                    className="sr-only"
+                  />
+                  Choose Photos
+                </label>
+              </div>
+
+              {queuedPhotos.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  {queuedPhotos.map((photo, idx) => (
+                    <div
+                      key={photo.id}
+                      className="relative overflow-hidden rounded-xl border border-stone-200 bg-stone-100"
+                    >
+                      <img
+                        src={photo.previewUrl}
+                        alt={`Recipe page ${idx + 1}`}
+                        className="aspect-3/4 w-full object-cover"
+                      />
+                      <span className="absolute bottom-1.5 left-1.5 rounded-md bg-stone-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                        Page {idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveQueuedPhoto(photo.id)}
+                        disabled={fetching}
+                        aria-label={`Remove page ${idx + 1}`}
+                        className="absolute top-1 right-1 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-stone-900/75 text-xs font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 px-4 text-center text-sm text-stone-500">
+                  No photos selected yet (supports 1–{MAX_IMPORT_PHOTOS} pages)
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="photo-extract-hint"
+                  className="block text-xs font-medium text-stone-600"
+                >
+                  Optional note for Gemini
+                </label>
+                <input
+                  id="photo-extract-hint"
+                  type="text"
+                  value={photoHint}
+                  onChange={(e) => setPhotoHint(e.target.value)}
+                  disabled={fetching}
+                  placeholder="e.g., Only extract the sauce recipe on the right"
+                  className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none disabled:bg-stone-50 sm:text-sm"
+                />
+              </div>
+
+              {error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+            </div>
+          ) : sourceMode === "bookmarklet" ? (
             <div className="space-y-4">
               <p className="text-sm text-stone-600">
                 Drag the button below onto your browser&apos;s bookmarks bar.
@@ -751,6 +985,15 @@ export default function ImportRecipeModal({
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
               {error}
+            </div>
+          )}
+
+          {extractedMeta && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3.5 py-2 text-xs text-amber-900">
+              Extracted from photo{queuedPhotos.length === 1 ? "" : "s"} with{" "}
+              <span className="font-semibold">{extractedMeta.modelUsed}</span>
+              {extractedMeta.fellBack && " (automatic fallback)"}.
+              Review any details before saving.
             </div>
           )}
 
