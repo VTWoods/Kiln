@@ -48,6 +48,9 @@ export default function RecipesPage() {
     () => new Set(),
   );
   const [showImportModal, setShowImportModal] = useState(false);
+  const [modalInitialStep, setModalInitialStep] = useState<"source" | "manual">(
+    "source",
+  );
   const [draftPreview, setDraftPreview] = useState<ImportedRecipe | null>(null);
   const [sharedImportUrl, setSharedImportUrl] = useState<string | null>(null);
   const [recipeForList, setRecipeForList] = useState<Recipe | null>(null);
@@ -186,11 +189,14 @@ export default function RecipesPage() {
 
         <button
           type="button"
-          onClick={() => setShowImportModal(true)}
+          onClick={() => {
+            setModalInitialStep("source");
+            setShowImportModal(true);
+          }}
           className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-700 sm:px-4"
         >
-          <span className="sm:hidden">+ Import</span>
-          <span className="hidden sm:inline">+ Import from URL</span>
+          <span className="sm:hidden">+ Add</span>
+          <span className="hidden sm:inline">+ Add Recipe</span>
         </button>
       </div>
 
@@ -311,19 +317,33 @@ export default function RecipesPage() {
           ))}
         </div>
       ) : recipes.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center sm:p-10">
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-6 text-center sm:p-10">
           <p className="text-base font-medium text-stone-800">No recipes yet</p>
           <p className="mt-1 text-sm text-stone-500">
-            Paste a link from a recipe website to import its ingredients,
-            instructions, and photo.
+            Import a recipe from a website or enter your own from scratch.
           </p>
-          <button
-            type="button"
-            onClick={() => setShowImportModal(true)}
-            className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
-          >
-            Import Your First Recipe
-          </button>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setModalInitialStep("source");
+                setShowImportModal(true);
+              }}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700"
+            >
+              Import from URL
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setModalInitialStep("manual");
+                setShowImportModal(true);
+              }}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+            >
+              Add Manually
+            </button>
+          </div>
         </div>
       ) : filteredRecipes.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center">
@@ -461,12 +481,17 @@ export default function RecipesPage() {
           initialPreview={draftPreview}
           initialUrl={sharedImportUrl ?? undefined}
           autoFetch={Boolean(sharedImportUrl)}
+          initialStep={modalInitialStep}
           onClose={() => {
             setDraftPreview(null);
             setSharedImportUrl(null);
+            setModalInitialStep("source");
             setShowImportModal(false);
           }}
-          onSaved={handleImported}
+          onSaved={(created) => {
+            setModalInitialStep("source");
+            handleImported(created);
+          }}
         />
       )}
 

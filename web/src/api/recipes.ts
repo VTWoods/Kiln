@@ -8,6 +8,7 @@ import {
   saveCachedRecipesSummary,
 } from "../offline/store";
 import type {
+  ImportedIngredient,
   ImportedRecipe,
   Recipe,
   SaveRecipePayload,
@@ -136,6 +137,75 @@ export async function createRecipe(
   const created = await parseJsonOrThrow<Recipe>(res);
   void saveCachedRecipe(created);
   return created;
+}
+
+export async function updateRecipe(
+  id: number,
+  payload: SaveRecipePayload,
+): Promise<Recipe> {
+  const res = await apiFetch(
+    `/api/recipes/${id}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    { timeoutMs: 20_000, bypassCircuitBreaker: true },
+  );
+  const updated = await parseJsonOrThrow<Recipe>(res);
+  void saveCachedRecipe(updated);
+  return updated;
+}
+
+export async function parseIngredientLines(
+  text: string,
+): Promise<ImportedIngredient[]> {
+  try {
+    const res = await apiFetch(
+      "/api/ingredients/parse",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      },
+      { timeoutMs: 15_000, bypassCircuitBreaker: true },
+    );
+    const data = await parseJsonOrThrow<{ ingredients: ImportedIngredient[] }>(
+      res,
+    );
+    return data.ingredients ?? [];
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new Error(
+        "Parsing ingredients requires a connection to your Kiln server.",
+      );
+    }
+    throw err;
+  }
+}
+
+export async function uploadRecipeImage(file: File): Promise<string> {
+  const form = new FormData();
+  form.append("image", file);
+  try {
+    const res = await apiFetch(
+      "/api/images/upload",
+      {
+        method: "POST",
+        body: form,
+      },
+      { timeoutMs: 25_000, bypassCircuitBreaker: true },
+    );
+    const data = await parseJsonOrThrow<{ image_url: string }>(res);
+    return data.image_url;
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new Error(
+        "Uploading photos requires a connection to your Kiln server.",
+      );
+    }
+    throw err;
+  }
 }
 
 export async function deleteRecipe(id: number): Promise<void> {

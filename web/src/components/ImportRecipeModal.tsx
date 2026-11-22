@@ -1,5 +1,18 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, createRecipe, importRecipePreview } from "../api/recipes";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import {
+  ApiError,
+  createRecipe,
+  importRecipePreview,
+  parseIngredientLines,
+  updateRecipe,
+  uploadRecipeImage,
+} from "../api/recipes";
 import {
   formatHostname,
   isSafeHttpUrl,
@@ -13,6 +26,8 @@ type Props = {
   initialPreview?: ImportedRecipe | null;
   initialUrl?: string;
   autoFetch?: boolean;
+  initialStep?: "source" | "manual";
+  editingRecipe?: Recipe | null;
   onClose: () => void;
   onSaved: (recipe: Recipe) => void;
 };
@@ -20,6 +35,22 @@ type Props = {
 type Step = "source" | "preview";
 type SourceMode = "url" | "html" | "bookmarklet";
 type EditableIngredient = IngredientInput & { raw?: string };
+
+const EMPTY_INGREDIENT: EditableIngredient = {
+  quantity: "",
+  unit: "",
+  name: "",
+  preparation: "",
+};
+
+function isBlankIngredient(ing: EditableIngredient): boolean {
+  return (
+    !ing.quantity.trim() &&
+    !ing.unit.trim() &&
+    !ing.name.trim() &&
+    !(ing.preparation || "").trim()
+  );
+}
 
 function buildBookmarkletCode(origin: string): string {
   const cleanOrigin = origin.trim().replace(/\/+$/, "");
@@ -45,18 +76,32 @@ export default function ImportRecipeModal({
   initialPreview,
   initialUrl,
   autoFetch = false,
+  initialStep = "source",
+  editingRecipe = null,
   onClose,
   onSaved,
 }: Props) {
-  const [step, setStep] = useState<Step>(initialPreview ? "preview" : "source");
+  const isEditing = Boolean(editingRecipe);
+  const [step, setStep] = useState<Step>(
+    editingRecipe || initialPreview || initialStep === "manual"
+      ? "preview"
+      : "source",
+  );
+  const [isManual, setIsManual] = useState<boolean>(
+    !editingRecipe && !initialPreview && initialStep === "manual",
+  );
   const [sourceMode, setSourceMode] = useState<SourceMode>("url");
   const [urlInput, setUrlInput] = useState(
-    initialPreview?.source_url || initialUrl || "",
+    editingRecipe?.source_url || initialPreview?.source_url || initialUrl || "",
   );
   const autoFetchedRef = useRef(false);
   const [htmlInput, setHtmlInput] = useState("");
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showPasteIngredients, setShowPasteIngredients] = useState(false);
+  const [pasteIngredientsText, setPasteIngredientsText] = useState("");
+  const [parsingIngredients, setParsingIngredients] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wasBlocked, setWasBlocked] = useState(false);
 
@@ -66,31 +111,51 @@ export default function ImportRecipeModal({
   );
   const [copiedBookmarklet, setCopiedBookmarklet] = useState(false);
   const bookmarkletLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Preview editable state
-  const [title, setTitle] = useState(initialPreview?.title || "");
+  // Preview / Manual / Edit state
+  const [title, setTitle] = useState(
+    editingRecipe?.title || initialPreview?.title || "",
+  );
   const [description, setDescription] = useState(
-    initialPreview?.description || "",
+    editingRecipe?.description || initialPreview?.description || "",
   );
   const [instructions, setInstructions] = useState(
-    initialPreview?.instructions || "",
+    editingRecipe?.instructions || initialPreview?.instructions || "",
   );
-  const [servings, setServings] = useState(
-    initialPreview && initialPreview.servings > 0 ? initialPreview.servings : 1,
+  const [servings, setServings] = useState(() => {
+    if (editingRecipe && editingRecipe.servings > 0) {
+      return editingRecipe.servings;
+    }
+    if (initialPreview && initialPreview.servings > 0) {
+      return initialPreview.servings;
+    }
+    return 1;
+  });
+  const [prepMinutes, setPrepMinutes] = useState(() => {
+    if (editingRecipe && editingRecipe.prep_minutes >= 0) {
+      return editingRecipe.prep_minutes;
+    }
+    if (initialPreview && initialPreview.prep_minutes >= 0) {
+      return initialPreview.prep_minutes;
+    }
+    return 0;
+  });
+  const [cookMinutes, setCookMinutes] = useState(() => {
+    if (editingRecipe && editingRecipe.cook_minutes >= 0) {
+      return editingRecipe.cook_minutes;
+    }
+    if (initialPreview && initialPreview.cook_minutes >= 0) {
+      return initialPreview.cook_minutes;
+    }
+    return 0;
+  });
+  const [sourceUrl, setSourceUrl] = useState(
+    editingRecipe?.source_url || initialPreview?.source_url || "",
   );
-  const [prepMinutes, setPrepMinutes] = useState(
-    initialPreview && initialPreview.prep_minutes >= 0
-      ? initialPreview.prep_minutes
-      : 0,
-  );
-  const [cookMinutes, setCookMinutes] = useState(
-    initialPreview && initialPreview.cook_minutes >= 0
-      ? initialPreview.cook_minutes
-      : 0,
-  );
-  const [sourceUrl, setSourceUrl] = useState(initialPreview?.source_url || "");
   const [selectedImage, setSelectedImage] = useState(
-    initialPreview?.image_url ||
+    editingRecipe?.image_url ||
+      initialPreview?.image_url ||
       (initialPreview?.candidate_images &&
         initialPreview.candidate_images[0]) ||
       "",
@@ -99,17 +164,26 @@ export default function ImportRecipeModal({
     initialPreview?.candidate_images || [],
   );
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
-  const [ingredients, setIngredients] = useState<EditableIngredient[]>(() =>
-    initialPreview?.ingredients && initialPreview.ingredients.length > 0
-      ? initialPreview.ingredients.map((i) => ({
-          raw: i.raw,
-          quantity: i.quantity,
-          unit: i.unit,
-          name: i.name,
-          preparation: i.preparation || "",
-        }))
-      : [],
-  );
+  const [ingredients, setIngredients] = useState<EditableIngredient[]>(() => {
+    if (editingRecipe?.ingredients && editingRecipe.ingredients.length > 0) {
+      return editingRecipe.ingredients.map((i) => ({
+        quantity: i.quantity,
+        unit: i.unit,
+        name: i.name,
+        preparation: i.preparation || "",
+      }));
+    }
+    if (initialPreview?.ingredients && initialPreview.ingredients.length > 0) {
+      return initialPreview.ingredients.map((i) => ({
+        raw: i.raw,
+        quantity: i.quantity,
+        unit: i.unit,
+        name: i.name,
+        preparation: i.preparation || "",
+      }));
+    }
+    return [{ ...EMPTY_INGREDIENT }];
+  });
 
   const [isFinePointer] = useState(
     () =>
@@ -153,7 +227,84 @@ export default function ImportRecipeModal({
           }))
         : [{ quantity: "", unit: "", name: "", preparation: "" }],
     );
+    setIsManual(false);
     setStep("preview");
+  };
+
+  const openManualEntry = () => {
+    setError(null);
+    setWasBlocked(false);
+    setIsManual(true);
+    setSourceUrl("");
+    setCandidateImages([]);
+    setFailedImages({});
+    if (ingredients.length === 0) {
+      setIngredients([{ ...EMPTY_INGREDIENT }]);
+    }
+    setStep("preview");
+  };
+
+  const handlePhotoFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploadingPhoto(true);
+    try {
+      const localUrl = await uploadRecipeImage(file);
+      setFailedImages((prev) => {
+        if (!prev[localUrl]) return prev;
+        const next = { ...prev };
+        delete next[localUrl];
+        return next;
+      });
+      setSelectedImage(localUrl);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Failed to upload recipe photo.",
+      );
+    } finally {
+      setUploadingPhoto(false);
+      if (photoInputRef.current) {
+        photoInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleParsePastedIngredients = async () => {
+    if (!pasteIngredientsText.trim()) {
+      setError("Paste at least one ingredient line to parse.");
+      return;
+    }
+    setError(null);
+    setParsingIngredients(true);
+    try {
+      const parsed = await parseIngredientLines(pasteIngredientsText);
+      if (parsed.length === 0) {
+        setError("No ingredients could be extracted from those lines.");
+        return;
+      }
+      setIngredients((prev) => {
+        const nonBlank = prev.filter((item) => !isBlankIngredient(item));
+        return [
+          ...nonBlank,
+          ...parsed.map((i) => ({
+            raw: i.raw,
+            quantity: i.quantity,
+            unit: i.unit,
+            name: i.name,
+            preparation: i.preparation || "",
+          })),
+        ];
+      });
+      setPasteIngredientsText("");
+      setShowPasteIngredients(false);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Failed to parse ingredients.",
+      );
+    } finally {
+      setParsingIngredients(false);
+    }
   };
 
   const fetchRecipePreview = async (targetUrl: string, html?: string) => {
@@ -220,7 +371,7 @@ export default function ImportRecipeModal({
     setError(null);
     setSaving(true);
     try {
-      const saved = await createRecipe({
+      const payload = {
         title: title.trim(),
         description: description.trim(),
         instructions: instructions.trim(),
@@ -237,7 +388,10 @@ export default function ImportRecipeModal({
             preparation: (ing.preparation || "").trim(),
           }))
           .filter((ing) => ing.name !== ""),
-      });
+      };
+      const saved = editingRecipe
+        ? await updateRecipe(editingRecipe.id, payload)
+        : await createRecipe(payload);
       onSaved(saved);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save recipe.");
@@ -282,18 +436,26 @@ export default function ImportRecipeModal({
 
   const tabClass = (mode: SourceMode) =>
     [
-      "min-h-[40px] flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:flex-initial sm:min-h-[36px]",
+      "min-h-[40px] rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:min-h-[36px]",
       sourceMode === mode
         ? "bg-amber-100 text-amber-900"
         : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
     ].join(" ");
 
-  const modalTitle =
-    step === "source" ? "Import Recipe" : "Preview & Confirm Recipe";
-  const modalSubtitle =
-    step === "source"
-      ? "Import by URL, paste HTML for sites that block bots, or use the browser bookmarklet."
-      : "Pick a photo and review the extracted details before saving.";
+  const modalTitle = isEditing
+    ? "Edit Recipe"
+    : step === "source"
+      ? "Add Recipe"
+      : isManual
+        ? "New Recipe"
+        : "Preview & Confirm Recipe";
+  const modalSubtitle = isEditing
+    ? "Update recipe details, photo, ingredients, or instructions."
+    : step === "source"
+      ? "Import from a URL, enter one manually, paste HTML, or use the bookmarklet."
+      : isManual
+        ? "Enter your recipe details below — no URL needed."
+        : "Pick a photo and review the extracted details before saving.";
 
   const formSubmit =
     step === "preview"
@@ -344,36 +506,47 @@ export default function ImportRecipeModal({
       )
     ) : (
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <button
-          type="button"
-          onClick={() => {
-            setError(null);
-            setStep("source");
-          }}
-          disabled={saving}
-          className="inline-flex min-h-[40px] items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50 sm:justify-start sm:px-2"
-        >
-          ← Change Source
-        </button>
+        {!isEditing ? (
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setIsManual(false);
+              setStep("source");
+            }}
+            disabled={saving || uploadingPhoto}
+            className="inline-flex min-h-[40px] items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50 sm:justify-start sm:px-2"
+          >
+            {isManual ? "← Import Instead" : "← Change Source"}
+          </button>
+        ) : (
+          <div className="hidden sm:block" />
+        )}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onClose}
-            disabled={saving}
+            disabled={saving || uploadingPhoto}
             className="min-h-[40px] flex-1 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 sm:flex-initial"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || uploadingPhoto}
             className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60 sm:flex-initial"
           >
             {saving ? (
               <>
                 <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                {selectedImage ? "Saving & caching photo…" : "Saving recipe…"}
+                {isEditing
+                  ? "Saving changes…"
+                  : selectedImage && !selectedImage.startsWith("/api/images/")
+                    ? "Saving & caching photo…"
+                    : "Saving recipe…"}
               </>
+            ) : isEditing ? (
+              "Save Changes"
             ) : (
               "Save Recipe"
             )}
@@ -389,13 +562,13 @@ export default function ImportRecipeModal({
       subtitle={modalSubtitle}
       footer={modalFooter}
       maxWidthClass="sm:max-w-3xl"
-      closeDisabled={fetching || saving}
+      closeDisabled={fetching || saving || uploadingPhoto}
       onSubmit={formSubmit}
     >
       {step === "source" ? (
         <div className="space-y-4">
           {/* Mode Tabs */}
-          <div className="flex items-center gap-1 border-b border-stone-200 pb-3">
+          <div className="grid grid-cols-2 gap-1.5 border-b border-stone-200 pb-3 sm:flex sm:items-center sm:gap-1">
             <button
               type="button"
               onClick={() => {
@@ -406,6 +579,13 @@ export default function ImportRecipeModal({
               className={tabClass("url")}
             >
               From URL
+            </button>
+            <button
+              type="button"
+              onClick={openManualEntry}
+              className="min-h-[40px] rounded-lg px-3 py-2 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 sm:min-h-[36px]"
+            >
+              Manual
             </button>
             <button
               type="button"
@@ -616,10 +796,50 @@ export default function ImportRecipeModal({
                 />
               </div>
             ) : (
-              <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-sm text-stone-500">
+              <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-sm text-stone-500">
                 No photo selected
               </div>
             )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                className={[
+                  "inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 shadow-2xs transition-colors hover:bg-stone-50",
+                  uploadingPhoto || saving
+                    ? "pointer-events-none opacity-60"
+                    : "",
+                ].join(" ")}
+              >
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => void handlePhotoFileChange(e)}
+                  disabled={uploadingPhoto || saving}
+                  className="sr-only"
+                />
+                {uploadingPhoto ? (
+                  <>
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-stone-300 border-t-amber-600" />
+                    Uploading photo…
+                  </>
+                ) : selectedImage ? (
+                  "Upload / Take Different Photo"
+                ) : (
+                  "Upload / Take Photo"
+                )}
+              </label>
+              {selectedImage && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedImage("")}
+                  disabled={uploadingPhoto || saving}
+                  className="min-h-[40px] rounded-lg px-3 py-2 text-xs font-medium text-stone-500 transition-colors hover:bg-stone-100 hover:text-red-600 disabled:opacity-50"
+                >
+                  Remove photo
+                </button>
+              )}
+            </div>
 
             {visibleCandidates.length > 0 && (
               <div>
@@ -769,18 +989,81 @@ export default function ImportRecipeModal({
 
           {/* Ingredients */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="text-sm font-medium text-stone-800">
                 Ingredients ({ingredients.filter((i) => i.name.trim()).length})
               </label>
-              <button
-                type="button"
-                onClick={addIngredient}
-                className="min-h-[36px] rounded-lg px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 hover:text-amber-800"
-              >
-                + Add ingredient
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setShowPasteIngredients((prev) => !prev);
+                  }}
+                  className="min-h-[36px] rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100"
+                >
+                  {showPasteIngredients ? "Close paste" : "Paste list"}
+                </button>
+                <button
+                  type="button"
+                  onClick={addIngredient}
+                  className="min-h-[36px] rounded-lg px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                >
+                  + Add
+                </button>
+              </div>
             </div>
+
+            {showPasteIngredients && (
+              <div className="space-y-2.5 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+                <label
+                  htmlFor="paste-ingredients-text"
+                  className="block text-xs font-medium text-stone-700"
+                >
+                  Paste or type one ingredient per line — quantities &amp; units
+                  will be parsed automatically:
+                </label>
+                <textarea
+                  id="paste-ingredients-text"
+                  rows={4}
+                  value={pasteIngredientsText}
+                  onChange={(e) => setPasteIngredientsText(e.target.value)}
+                  disabled={parsingIngredients}
+                  placeholder={
+                    "2 cups all-purpose flour\n3 cloves garlic, minced\n1 tsp kosher salt"
+                  }
+                  className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:text-sm"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPasteIngredients(false);
+                      setPasteIngredientsText("");
+                    }}
+                    disabled={parsingIngredients}
+                    className="min-h-[40px] rounded-lg border border-stone-300 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleParsePastedIngredients()}
+                    disabled={parsingIngredients || !pasteIngredientsText.trim()}
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-amber-600 px-3.5 py-2 text-xs font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    {parsingIngredients ? (
+                      <>
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        Parsing…
+                      </>
+                    ) : (
+                      "Parse & Add"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2.5 sm:space-y-2">
               {ingredients.map((ing, idx) => (
@@ -844,12 +1127,17 @@ export default function ImportRecipeModal({
 
           {/* Instructions */}
           <div>
-            <label
-              htmlFor="preview-instructions"
-              className="block text-sm font-medium text-stone-700"
-            >
-              Instructions
-            </label>
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
+              <label
+                htmlFor="preview-instructions"
+                className="block text-sm font-medium text-stone-700"
+              >
+                Instructions
+              </label>
+              <span className="text-xs text-stone-500">
+                Separate steps with a blank line for Cook Mode &amp; Nest Hub
+              </span>
+            </div>
             <textarea
               id="preview-instructions"
               rows={6}

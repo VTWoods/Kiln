@@ -4,6 +4,7 @@ import json
 import tempfile
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 
 from api.services.fetcher import (
@@ -235,3 +236,81 @@ class RecipesViewTests(TestCase):
                     self.assertEqual(self.client.get(second_img).status_code, 404)
         finally:
             img_server.shutdown()
+
+    def test_parse_ingredients_endpoint(self) -> None:
+        res = self.client.post(
+            "/api/ingredients/parse",
+            data=json.dumps(
+                {
+                    "text": "- 2 cups all-purpose flour\n• 3 cloves garlic, minced\n\n1 tsp kosher salt"
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        parsed = res.json()["ingredients"]
+        self.assertEqual(len(parsed), 3)
+        self.assertEqual(parsed[0]["quantity"], "2")
+        self.assertEqual(parsed[0]["unit"], "cup")
+        self.assertEqual(parsed[0]["name"], "all-purpose flour")
+        self.assertEqual(parsed[1]["quantity"], "3")
+        self.assertEqual(parsed[1]["unit"], "clove")
+        self.assertEqual(parsed[1]["name"], "garlic")
+        self.assertEqual(parsed[1]["preparation"], "minced")
+
+        bad = self.client.post(
+            "/api/ingredients/parse",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        self.assertEqual(bad.status_code, 400)
+
+    def test_upload_image_and_manual_recipe_without_url(self) -> None:
+        with tempfile.TemporaryDirectory() as img_dir:
+            store = ImageStore(img_dir, SafeFetcher(allow_private_networks=True))
+            with patch("api.views.recipes.get_image_store", return_value=store):
+                # Reject missing file
+                missing = self.client.post("/api/images/upload")
+                self.assertEqual(missing.status_code, 400)
+
+                # Reject non-image file
+                bad_file = SimpleUploadedFile(
+                    "notes.txt", b"hello world", content_type="text/plain"
+                )
+                rejected = self.client.post("/api/images/upload", {"image": bad_file})
+                self.assertEqual(rejected.status_code, 400)
+
+                # Upload valid PNG and use it in a manual recipe with no source_url
+                good_file = SimpleUploadedFile(
+                    "dish.png", PNG_1X1, content_type="image/png"
+                )
+                up_res = self.client.post("/api/images/upload", {"image": good_file})
+                self.assertEqual(up_res.status_code, 201)
+                uploaded_url = up_res.json()["image_url"]
+                self.assertTrue(uploaded_url.startswith("/api/images/"))
+                self.assertEqual(self.client.get(uploaded_url).status_code, 200)
+
+                c_res = self.client.post(
+                    "/api/recipes",
+                    data=json.dumps(
+                        {
+                            "title": "Grandma's Pancakes",
+                            "description": "Family recipe",
+                            "instructions": "Mix dry.\n\nCook on griddle.",
+                            "servings": 4,
+                            "prep_minutes": 10,
+                            "cook_minutes": 15,
+                            "source_url": "",
+                            "image_url": uploaded_url,
+                            "ingredients": [
+                                {"quantity": "2", "unit": "cup", "name": "flour"}
+                            ],
+                        }
+                    ),
+                    content_type="application/json",
+                )
+                self.assertEqual(c_res.status_code, 201)
+                created = c_res.json()
+                self.assertEqual(created["source_url"], "")
+                self.assertEqual(created["image_url"], uploaded_url)
+                self.assertEqual(created["ingredient_names"], ["flour"])

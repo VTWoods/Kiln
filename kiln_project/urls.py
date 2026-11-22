@@ -13,8 +13,10 @@ urlpatterns = [
     path("api/recipes/import-preview", recipes.import_preview_view),
     path("api/recipes/bookmarklet", recipes.bookmarklet_import_view),
     path("api/recipes/import-draft/<str:token>", recipes.import_draft_view),
+    path("api/ingredients/parse", recipes.parse_ingredients_view),
     path("api/recipes", recipes.recipes_collection_view),
     path("api/recipes/<str:recipe_id>", recipes.recipe_detail_view),
+    path("api/images/upload", recipes.upload_image_view),
     path("api/images/<str:filename>", recipes.serve_image_view),
     # Shopping lists
     path("api/shopping-lists", shopping_lists.shopping_lists_collection_view),

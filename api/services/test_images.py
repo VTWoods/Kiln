@@ -63,5 +63,15 @@ class ImagesServiceTests(SimpleTestCase):
 
                 store.delete_local(local_url)
                 self.assertFalse(saved_path.exists())
+
+                # Direct byte uploads (for manual recipe photos)
+                uploaded_url = store.save_bytes(PNG_1X1, content_type="image/png")
+                self.assertTrue(is_local_image_url(uploaded_url))
+                self.assertTrue(uploaded_url.endswith(".png"))
+                with self.assertRaises(InvalidURLError):
+                    store.save_bytes(b"", content_type="image/png")
+                with self.assertRaises(InvalidURLError):
+                    store.save_bytes(b"plain text", content_type="text/plain")
+                store.delete_local(uploaded_url)
         finally:
             server.shutdown()

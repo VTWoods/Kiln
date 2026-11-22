@@ -4,6 +4,7 @@ import { deleteRecipe, getRecipe } from "../api/recipes";
 import AddToMealPlanModal from "../components/AddToMealPlanModal";
 import AddToShoppingListModal from "../components/AddToShoppingListModal";
 import CastRecipeModal from "../components/CastRecipeModal";
+import ImportRecipeModal from "../components/ImportRecipeModal";
 import { getCachedRecipe } from "../offline/store";
 import { formatDayLabel } from "../types/mealPlan";
 import {
@@ -24,6 +25,7 @@ export default function RecipeDetailPage() {
   const [showAddToListModal, setShowAddToListModal] = useState(false);
   const [showAddToPlanModal, setShowAddToPlanModal] = useState(false);
   const [showCastModal, setShowCastModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const [mobileTab, setMobileTab] = useState<"ingredients" | "instructions">(
@@ -237,6 +239,17 @@ export default function RecipeDetailPage() {
                 role="menu"
                 className="absolute right-0 z-30 mt-1.5 w-48 overflow-hidden rounded-xl border border-stone-200 bg-white py-1 shadow-lg"
               >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowMoreMenu(false);
+                    setShowEditModal(true);
+                  }}
+                  className="block w-full px-4 py-3 text-left text-sm font-medium text-stone-700 hover:bg-stone-50 hover:text-stone-900"
+                >
+                  Edit Recipe
+                </button>
                 <Link
                   to={`/recipes/${recipe.id}/cook`}
                   role="menuitem"
@@ -614,6 +627,18 @@ export default function RecipeDetailPage() {
           recipeId={recipe.id}
           recipeTitle={recipe.title}
           onClose={() => setShowCastModal(false)}
+        />
+      )}
+
+      {showEditModal && (
+        <ImportRecipeModal
+          editingRecipe={recipe}
+          onClose={() => setShowEditModal(false)}
+          onSaved={(updated) => {
+            setRecipe(updated);
+            setImageError(false);
+            setShowEditModal(false);
+          }}
         />
       )}
     </article>

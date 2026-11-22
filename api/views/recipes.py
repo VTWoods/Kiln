@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -11,6 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from api.models import Recipe, RecipeIngredient
 from api.services.fetcher import (
+    DEFAULT_MAX_IMAGE_BYTES,
     FetchFailedError,
     InvalidURLError,
     ParseFailedError,
@@ -18,6 +20,7 @@ from api.services.fetcher import (
 )
 from api.services.images import ImageStore, is_local_image_url
 from api.services.import_drafts import draft_store
+from api.services.ingredient_parser import parse_ingredient
 from api.services.pantry_staples import get_pantry_staple_keys, is_ingredient_staple
 from api.views import (
     get_image_store,
@@ -420,6 +423,87 @@ def recipe_detail_view(request: HttpRequest, recipe_id: str) -> HttpResponse:
         return HttpResponse(status=204)
 
     return JsonResponse({"error": "method not allowed"}, status=405)
+
+
+_LEADING_BULLET_RE = re.compile(r"^\s*(?:[-*•·▪▸–—]+|\d+[.)])\s+")
+_MAX_PARSE_LINES = 200
+
+
+@csrf_exempt
+def parse_ingredients_view(request: HttpRequest) -> JsonResponse:
+    """Parse plain-text ingredient lines into structured quantity/unit/name/preparation rows."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    data, err_resp = parse_json_body(request)
+    if err_resp is not None or data is None:
+        return err_resp or JsonResponse({"error": "invalid request body"}, status=400)
+
+    raw_lines: list[str] = []
+    if isinstance(data.get("lines"), list):
+        raw_lines = [str(line) for line in data["lines"]]
+    elif isinstance(data.get("text"), str):
+        raw_lines = data["text"].splitlines()
+    else:
+        return JsonResponse(
+            {"error": "provide 'text' or 'lines' to parse"}, status=400
+        )
+
+    cleaned_lines = [
+        _LEADING_BULLET_RE.sub("", line).strip()
+        for line in raw_lines
+        if line and line.strip()
+    ]
+    if len(cleaned_lines) > _MAX_PARSE_LINES:
+        return JsonResponse(
+            {"error": f"too many lines (maximum {_MAX_PARSE_LINES})"}, status=400
+        )
+
+    parsed_rows: list[dict[str, str]] = []
+    for line in cleaned_lines:
+        parsed = parse_ingredient(line)
+        if parsed.name:
+            parsed_rows.append(
+                {
+                    "raw": parsed.raw,
+                    "quantity": parsed.quantity,
+                    "unit": parsed.unit,
+                    "name": parsed.name,
+                    "preparation": parsed.preparation,
+                }
+            )
+
+    return JsonResponse({"ingredients": parsed_rows}, status=200)
+
+
+@csrf_exempt
+def upload_image_view(request: HttpRequest) -> JsonResponse:
+    """Upload a recipe photo directly (e.g., from a phone camera/gallery) into local ImageStore."""
+    if request.method != "POST":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    uploaded = request.FILES.get("image") or request.FILES.get("file")
+    if uploaded is None:
+        return JsonResponse({"error": "image file is required"}, status=400)
+
+    if uploaded.size is not None and uploaded.size > DEFAULT_MAX_IMAGE_BYTES:
+        return JsonResponse({"error": "image exceeds 10 MB limit"}, status=400)
+
+    raw_bytes = uploaded.read(DEFAULT_MAX_IMAGE_BYTES + 1)
+    if len(raw_bytes) > DEFAULT_MAX_IMAGE_BYTES:
+        return JsonResponse({"error": "image exceeds 10 MB limit"}, status=400)
+
+    try:
+        image_url = get_image_store().save_bytes(
+            raw_bytes, content_type=getattr(uploaded, "content_type", "") or ""
+        )
+    except InvalidURLError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception:
+        logger.exception("failed to store uploaded recipe image")
+        return JsonResponse({"error": "failed to store uploaded image"}, status=500)
+
+    return JsonResponse({"image_url": image_url}, status=201)
 
 
 def serve_image_view(request: HttpRequest, filename: str) -> HttpResponse:

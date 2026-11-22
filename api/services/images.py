@@ -223,6 +223,22 @@ class ImageStore:
         self.dir = Path(directory).resolve()
         self.fetcher = fetcher or SafeFetcher()
 
+    def save_bytes(self, data: bytes, content_type: str = "") -> str:
+        if not data:
+            raise InvalidURLError("image file is empty")
+        if len(data) > DEFAULT_MAX_IMAGE_BYTES:
+            raise InvalidURLError("image exceeds 10 MB limit")
+
+        ext = _sniff_image_ext(content_type, data)
+        if not ext:
+            raise InvalidURLError("unsupported image format (use JPG, PNG, WebP, GIF, or AVIF)")
+
+        self.dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{uuid.uuid4()}{ext}"
+        dest = self.dir / filename
+        dest.write_bytes(data)
+        return f"{LOCAL_IMAGE_PREFIX}{filename}"
+
     def save_from_url(self, raw_url: str, referer: str = "") -> str:
         result = self.fetcher.fetch(
             raw_url, max_bytes=DEFAULT_MAX_IMAGE_BYTES, referer=referer
