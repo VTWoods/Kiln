@@ -4,5 +4,5 @@ recipe-scrapers>=15.0.0
 ingredient-parser-nlp>=2.0.0
 inflect>=7.0.0
 pychromecast>=14.0.0
-requests>=2.31.0
+curl_cffi>=0.17.0
 beautifulsoup4>=4.12.0

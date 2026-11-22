@@ -5,7 +5,8 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
-import requests
+from curl_cffi import requests as cffi_requests
+from curl_cffi.const import CurlOpt
 
 DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024  # 5 MiB
@@ -70,7 +71,9 @@ def _is_private_or_reserved_ip(raw_ip: str) -> bool:
     return False
 
 
-def _assert_public_host(hostname: str) -> None:
+def _assert_public_host(hostname: str) -> str:
+    """Resolve ``hostname``, reject it if ANY address is non-public, and return
+    the first validated IP so the caller can pin the connection to it."""
     try:
         infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
     except OSError as exc:
@@ -85,6 +88,27 @@ def _assert_public_host(hostname: str) -> None:
             raise InvalidURLError(
                 f"private or loopback address {hostname!r} is not allowed"
             )
+    return str(infos[0][4][0])
+
+
+def _is_ip_literal(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_pin(hostname: str, port: int, ip: str) -> str:
+    """Build a CURLOPT_RESOLVE entry (``host:port:addr``) pinning DNS for a hop."""
+    addr = f"[{ip}]" if ":" in ip else ip
+    return f"{hostname}:{port}:{addr}"
+
+
+def _default_port(parsed) -> int:
+    if parsed.port:
+        return parsed.port
+    return 443 if parsed.scheme.lower() == "https" else 80
 
 
 class SafeFetcher:
@@ -121,13 +145,22 @@ class SafeFetcher:
             except InvalidURLError:
                 pass
 
-        session = requests.Session()
-        try:
-            for _ in range(MAX_REDIRECTS + 1):
-                parsed = urlparse(current_url)
-                if not self.allow_private_networks and parsed.hostname:
-                    _assert_public_host(parsed.hostname)
+        for _ in range(MAX_REDIRECTS + 1):
+            parsed = urlparse(current_url)
+            curl_options: dict = {}
+            if not self.allow_private_networks and parsed.hostname:
+                pinned_ip = _assert_public_host(parsed.hostname)
+                if not _is_ip_literal(parsed.hostname):
+                    # Pin libcurl to the IP we just validated so a second DNS
+                    # lookup (DNS rebinding) cannot redirect us to a private host.
+                    curl_options[CurlOpt.RESOLVE] = [
+                        _resolve_pin(parsed.hostname, _default_port(parsed), pinned_ip)
+                    ]
 
+            # A fresh session per hop keeps each hop's DNS pin isolated.
+            # NOTE: no ``impersonate=`` — Kiln never spoofs browser fingerprints.
+            session = cffi_requests.Session(curl_options=curl_options)
+            try:
                 try:
                     resp = session.get(
                         current_url,
@@ -135,8 +168,9 @@ class SafeFetcher:
                         timeout=self.timeout,
                         allow_redirects=False,
                         stream=True,
+                        impersonate="chrome",
                     )
-                except requests.RequestException as exc:
+                except cffi_requests.RequestsError as exc:
                     raise FetchFailedError(f"request failed: {exc}") from exc
 
                 try:
@@ -173,7 +207,7 @@ class SafeFetcher:
                     )
                 finally:
                     resp.close()
+            finally:
+                session.close()
 
-            raise FetchFailedError("too many redirects")
-        finally:
-            session.close()
+        raise FetchFailedError("too many redirects")

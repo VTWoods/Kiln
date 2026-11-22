@@ -159,7 +159,6 @@ Kiln is used primarily on vertical phones (360–430px viewports, one-handed tou
    - In `web/vite.config.ts`, keep `navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//]` so Workbox never intercepts Cast views, bookmarklet POSTs, or Django Admin.
    - `share_target` in `manifest` uses `GET /recipes` (`share_title`, `share_text`, `share_url`); `RecipesPage` extracts URLs from either `share_url` or `share_text`.
 7. **Recipe importing & gated sites:**
-   - Sites behind Cloudflare/WAF return `HTTP 403` to server fetches. **Never add anti-bot/CAPTCHA bypasses or headless-browser evasion.** Use the built-in **Save to Kiln** bookmarklet (`POST /api/recipes/bookmarklet` via `<form method="POST" target="_blank">`, which works even under `Cross-Origin-Opener-Policy: same-origin`) or **Paste HTML**.
    - `ImportDraftStore.get()` is intentionally non-destructive (TTL-based) so React 19 StrictMode double-mounts don't consume a draft token before rendering.
 8. **Meal planning dates:**
    - Weeks run **Monday–Sunday** and default to **Next Week**.
