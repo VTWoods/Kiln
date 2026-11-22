@@ -26,7 +26,11 @@ import {
   shiftWeek,
   type MealPlanEntry,
 } from "../types/mealPlan";
-import { formatMinutes, type Recipe } from "../types/recipe";
+import {
+  formatMinutes,
+  matchesRecipeSearch,
+  type Recipe,
+} from "../types/recipe";
 
 const DAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"] as const;
 const UNDO_TIMEOUT_MS = 6000;
@@ -302,9 +306,8 @@ export default function MealPlanPage() {
     }
   }
 
-  const filterLower = recipeFilter.trim().toLowerCase();
-  const filteredRecipes = filterLower
-    ? allRecipes.filter((r) => r.title.toLowerCase().includes(filterLower))
+  const filteredRecipes = recipeFilter.trim()
+    ? allRecipes.filter((r) => matchesRecipeSearch(r, recipeFilter))
     : allRecipes;
 
   const pickingDay = addingForDate ? formatDayLabel(addingForDate) : null;
@@ -805,7 +808,7 @@ export default function MealPlanPage() {
             <input
               ref={pickerSearchRef}
               type="search"
-              placeholder="Search your recipes…"
+              placeholder="Search by title or ingredient…"
               value={recipeFilter}
               onChange={(e) => setRecipeFilter(e.target.value)}
               className="min-h-[44px] w-full rounded-xl border border-stone-300 bg-stone-50 px-3.5 py-2 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white focus:outline-none sm:text-sm"

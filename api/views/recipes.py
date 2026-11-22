@@ -6,7 +6,6 @@ from typing import Any
 from urllib.parse import urlencode
 
 from django.db import transaction
-from django.db.models import Count
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -73,13 +72,23 @@ def _serialize_recipe(
         payload["ingredients"] = [
             _serialize_ingredient(i, staple_keys=staple_keys) for i in ingredients
         ]
+        payload["ingredient_names"] = [i.name for i in ingredients if i.name]
         payload["ingredient_count"] = len(ingredients)
     else:
-        payload["ingredient_count"] = (
-            ingredient_count
-            if ingredient_count is not None
-            else getattr(recipe, "annotated_ingredient_count", 0)
-        )
+        prefetched = getattr(recipe, "_prefetched_objects_cache", {}).get("ingredients")
+        if prefetched is not None:
+            ingredient_names = [i.name for i in prefetched if i.name]
+            payload["ingredient_names"] = ingredient_names
+            payload["ingredient_count"] = (
+                ingredient_count if ingredient_count is not None else len(prefetched)
+            )
+        else:
+            payload["ingredient_names"] = []
+            payload["ingredient_count"] = (
+                ingredient_count
+                if ingredient_count is not None
+                else getattr(recipe, "annotated_ingredient_count", 0)
+            )
     return payload
 
 
@@ -255,9 +264,9 @@ def import_draft_view(request: HttpRequest, token: str) -> JsonResponse:
 @csrf_exempt
 def recipes_collection_view(request: HttpRequest) -> JsonResponse:
     if request.method == "GET":
-        qs = Recipe.objects.annotate(
-            annotated_ingredient_count=Count("ingredients")
-        ).order_by("-created_at", "-id")
+        qs = Recipe.objects.prefetch_related("ingredients").order_by(
+            "-created_at", "-id"
+        )
         return JsonResponse(
             [_serialize_recipe(r) for r in qs],
             safe=False,

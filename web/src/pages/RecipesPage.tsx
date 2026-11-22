@@ -9,7 +9,9 @@ import { formatDayLabel } from "../types/mealPlan";
 import {
   formatHostname,
   formatMinutes,
+  getMatchingIngredients,
   isSafeHttpUrl,
+  matchesRecipeSearch,
   type ImportedRecipe,
   type Recipe,
 } from "../types/recipe";
@@ -164,21 +166,8 @@ export default function RecipesPage() {
   };
 
   const filteredRecipes = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return recipes;
-    return recipes.filter((recipe) => {
-      if (recipe.title.toLowerCase().includes(q)) return true;
-      if (recipe.description && recipe.description.toLowerCase().includes(q)) {
-        return true;
-      }
-      if (
-        recipe.source_url &&
-        formatHostname(recipe.source_url).toLowerCase().includes(q)
-      ) {
-        return true;
-      }
-      return false;
-    });
+    if (!searchQuery.trim()) return recipes;
+    return recipes.filter((recipe) => matchesRecipeSearch(recipe, searchQuery));
   }, [recipes, searchQuery]);
 
   const trimmedQuery = searchQuery.trim();
@@ -211,7 +200,7 @@ export default function RecipesPage() {
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter recipes by title, description, or site…"
+            placeholder="Search by title, ingredient, or site…"
             aria-label="Filter recipes"
             className="w-full appearance-none rounded-xl border border-stone-200 bg-white py-2.5 pr-11 pl-3.5 text-base text-stone-900 shadow-2xs placeholder:text-stone-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none sm:py-2 sm:text-sm [&::-webkit-search-cancel-button]:hidden"
           />
@@ -350,12 +339,15 @@ export default function RecipesPage() {
           </button>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
           {filteredRecipes.map((recipe) => {
             const totalMinutes = recipe.prep_minutes + recipe.cook_minutes;
             const hasSource = isSafeHttpUrl(recipe.source_url);
             const showImage =
               Boolean(recipe.image_url) && !failedImages.has(recipe.id);
+            const matchedIngredients = trimmedQuery
+              ? getMatchingIngredients(recipe, trimmedQuery)
+              : [];
 
             return (
               <div
@@ -403,6 +395,13 @@ export default function RecipesPage() {
                         {recipe.description}
                       </p>
                     </div>
+                  )}
+
+                  {matchedIngredients.length > 0 && (
+                    <p className="mt-1 truncate text-[11px] font-medium text-amber-800/85">
+                      Matches: {matchedIngredients.slice(0, 3).join(", ")}
+                      {matchedIngredients.length > 3 ? "…" : ""}
+                    </p>
                   )}
 
                   <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-xs text-stone-500 sm:mt-auto sm:pt-4">

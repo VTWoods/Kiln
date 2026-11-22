@@ -20,6 +20,7 @@ export type Recipe = {
   source_url: string;
   image_url: string;
   ingredient_count: number;
+  ingredient_names?: string[];
   ingredients?: RecipeIngredient[];
   created_at: string;
   updated_at: string;
@@ -88,4 +89,60 @@ export function formatHostname(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+function getSearchableIngredientNames(recipe: Recipe): string[] {
+  if (recipe.ingredient_names && recipe.ingredient_names.length > 0) {
+    return recipe.ingredient_names;
+  }
+  if (recipe.ingredients && recipe.ingredients.length > 0) {
+    return recipe.ingredients.map((i) => i.name).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Multi-word search across recipe title, description, source hostname, and ingredient names.
+ * Every whitespace-separated term must match at least one searchable field.
+ */
+export function matchesRecipeSearch(recipe: Recipe, rawQuery: string): boolean {
+  const terms = rawQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+
+  const haystack = [
+    recipe.title,
+    recipe.description,
+    recipe.source_url ? formatHostname(recipe.source_url) : "",
+    ...getSearchableIngredientNames(recipe),
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+  return terms.every((term) => haystack.includes(term));
+}
+
+/**
+ * Returns ingredient names on the recipe that match any search term (useful for
+ * showing why a recipe matched when searching by ingredient).
+ */
+export function getMatchingIngredients(
+  recipe: Recipe,
+  rawQuery: string,
+): string[] {
+  const terms = rawQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+
+  const names = getSearchableIngredientNames(recipe);
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (seen.has(lower)) continue;
+    if (terms.some((term) => lower.includes(term))) {
+      seen.add(lower);
+      matches.push(name);
+    }
+  }
+  return matches;
 }

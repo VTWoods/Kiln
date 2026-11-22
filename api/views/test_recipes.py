@@ -214,6 +214,19 @@ class RecipesViewTests(TestCase):
                     self.assertEqual(self.client.get(first_img).status_code, 404)
                     self.assertEqual(self.client.get(second_img).status_code, 200)
                     self.assertEqual(len(updated["ingredients"]), 2)
+                    self.assertEqual(
+                        updated["ingredient_names"], ["ground beef", "cayenne"]
+                    )
+
+                    # List endpoint includes ingredient_names & ingredient_count for search
+                    list_res = self.client.get("/api/recipes")
+                    self.assertEqual(list_res.status_code, 200)
+                    listed = list_res.json()
+                    self.assertEqual(len(listed), 1)
+                    self.assertEqual(listed[0]["ingredient_count"], 2)
+                    self.assertEqual(
+                        listed[0]["ingredient_names"], ["ground beef", "cayenne"]
+                    )
 
                     # Delete removes recipe and remaining cached image
                     d_res = self.client.delete(f"/api/recipes/{created['id']}")
