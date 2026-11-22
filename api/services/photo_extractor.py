@@ -52,7 +52,7 @@ RECIPE_EXTRACTION_SCHEMA: dict[str, Any] = {
         },
         "description": {
             "type": "string",
-            "description": "Short 1-2 sentence summary or headnote if present, otherwise empty string.",
+            "description": "One short sentence, in your own words, summarizing the dish (empty string if unclear). Do not copy the headnote.",
         },
         "servings": {
             "type": "integer",
@@ -70,7 +70,7 @@ RECIPE_EXTRACTION_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "Full list of ingredient lines exactly as written on the recipe, "
+                "Full list of ingredient lines from the recipe, one per item, "
                 "including quantity, unit, ingredient name, and preparation notes "
                 "(e.g. '2 cups all-purpose flour', '3 cloves garlic, minced')."
             ),
@@ -79,7 +79,8 @@ RECIPE_EXTRACTION_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "Ordered list of clear cooking instruction steps, without leading step numbers."
+                "Ordered list of concise cooking steps rewritten in your own words "
+                "(keep every temperature, time, quantity, and technique), without leading step numbers."
             ),
         },
     },
@@ -95,14 +96,17 @@ RECIPE_EXTRACTION_SCHEMA: dict[str, Any] = {
 }
 
 _BASE_PROMPT = (
-    "Extract the recipe from the provided photo(s). "
+    "You are helping a home cook save a recipe from their own cookbook or recipe card into a personal meal-planning app. "
+    "Read the provided photo(s) and return the recipe as structured data. "
     "Multiple photos may show consecutive pages or the front and back of the same recipe — "
     "combine them in order into one complete recipe. "
-    "Transcribe ingredient measurements accurately (convert vulgar fractions like ½ to 1/2 if helpful, "
-    "and keep preparation notes like 'chopped' or 'divided'). "
-    "Split cooking directions into clear, sequential steps without repeating step numbers. "
-    "If a field like prep time, cook time, or description is not shown, use 0 for times, 1 for servings, "
-    "and an empty string for description. "
+    "Ingredients: list each ingredient line with its quantity, unit, name, and preparation notes "
+    "(convert vulgar fractions like ½ to 1/2, and keep notes like 'chopped' or 'divided'). "
+    "Steps: do NOT transcribe the directions verbatim. Rewrite them as short, plain, imperative steps "
+    "in your own words, like notes a cook would jot down — drop anecdotes, tips, and filler, "
+    "but keep every temperature, time, quantity, doneness cue, and technique so the recipe still works. "
+    "Description: write at most one short sentence of your own; never copy the headnote or introduction. "
+    "If prep time, cook time, or servings are not shown, use 0 for times and 1 for servings. "
     "If no recipe is visible in the photo(s), return empty strings and empty arrays."
 )
 
