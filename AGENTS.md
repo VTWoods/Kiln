@@ -2,12 +2,20 @@
 
 Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for importing recipes from the web, planning weekly meals, managing aisle-grouped shopping lists, and casting touch-friendly Cook Mode instructions to a Google Nest Hub.
 
+### Core Use Case (Local-Network + Offline Grocery Workflow)
+
+Kiln runs exclusively on a **home local network** (not exposed to the public internet):
+1. **At home (on Wi-Fi):** Manage recipes, plan weekly meals, build aisle-grouped shopping lists, and cast Cook Mode to a Nest Hub. The PWA proactively syncs all recipes, photos, meal plans, pantry staples, and shopping lists into IndexedDB/Cache Storage.
+2. **At the grocery store (away from home LAN):** The phone typically still has cellular internet (`navigator.onLine === true`), so the home Kiln server is unreachable even though the device is "online." Kiln detects this via fast `/api/health` probes on app open/resume and runs completely offline from its synced local copy — allowing you to browse recipes/lists, check items off, add/remove items, and delete completed lists while queueing mutations in the IndexedDB outbox.
+3. **Back home (reconnected to Wi-Fi):** Kiln automatically detects the local server is reachable again, flushes queued outbox mutations first (never overwriting unsynced local changes with stale server state), and re-syncs fresh data back to the device.
+
 ---
 
 ## 1. Tech Stack
 
-- **Backend:** Python 3.12 + Django 5.2 + SQLite (`./data/kiln.db`), served via Gunicorn in production.
+- **Backend:** Python 3.12 + Django 5.2 + SQLite (`./data/kiln.db`), served via Gunicorn (`--workers 2 --threads 4 --timeout 120`) in production.
   - Recipe scraping: `recipe-scrapers`
+  - Photo-to-recipe extraction: `google-genai` (`>=3.2.0`, Interactions API: `gemini-4-hydrogen` default with `gemini-3.5-flash-lite` fallback)
   - Ingredient parsing & units: `ingredient-parser-nlp` (NLTK), `pint`, `inflect`
   - Grocery aisle classification: Hybrid local categorizer + NLTK `wordnet`
   - Nest Hub casting: `pychromecast` (`DashCastController`)
@@ -34,8 +42,9 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 │   ├── services/            # Domain logic + co-located unit tests (test_*.py)
 │   │   ├── fetcher.py             # SSRF-safe HTTP fetcher (blocks private/loopback IPs, size limits)
 │   │   ├── importer.py            # RecipeImporter ABC + RecipeScrapersImporter (import_url & import_html)
+│   │   ├── photo_extractor.py     # PhotoRecipeExtractor ABC + Gemini streaming extractor & cooldown breaker
 │   │   ├── import_drafts.py       # Thread-safe in-memory TTL store for bookmarklet previews
-│   │   ├── images.py              # Candidate image extraction + local cache under ./data/images/
+│   │   ├── images.py              # Candidate image extraction + local upload/cache under ./data/images/
 │   │   ├── ingredient_parser.py   # IngredientParser ABC + NLPIngredientParser
 │   │   ├── units.py               # Pint + inflect US customary unit normalization & quantity merging
 │   │   ├── shopping_list_merger.py# Deduplication, singular/plural matching, multi-recipe M2M, aisles
@@ -52,13 +61,15 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 │   ├── public/              # favicon.svg, pwa-192x192.png, pwa-512x512.png, maskable, apple-touch-icon
 │   ├── vite.config.ts       # Vite proxy, Caddy allowedHosts/HMR, VitePWA manifest + share_target + Workbox
 │   └── src/
-│       ├── App.tsx          # Sticky top nav (Kiln+sync, Recipe, Plan, List) & routes
+│       ├── App.tsx          # Sticky top nav (Kiln+sync+Force Refresh, Recipe, Plan, List) & routes
 │       ├── api/             # Offline-first API clients (recipes, shoppingLists, pantryStaples, mealPlan, cast)
+│       ├── hooks/           # useBackToClose, usePwaBackGuard (Android/PWA hardware Back navigation)
 │       ├── offline/         # IndexedDB store (store.ts), timeout/circuit-breaker fetch (fetch.ts), & outbox sync (sync.ts)
 │       ├── pages/           # RecipesPage, RecipeDetailPage, MealPlanPage, ShoppingListsPage, CookModePage
-│       ├── components/      # ModalSheet, ImportRecipeModal, AddToShoppingListModal, AddToMealPlanModal,
-│       │                    # AddMealPlanToShoppingListModal, ManagePantryStaplesModal, CastRecipeModal
-│       └── types/           # recipe.ts, shoppingList.ts, mealPlan.ts (Mon–Sun date utils)
+│       ├── components/      # ModalSheet, ImportRecipeModal (URL/HTML/Bookmarklet/Photo/Manual),
+│       │                    # AddToShoppingListModal, AddToMealPlanModal, AddMealPlanToShoppingListModal,
+│       │                    # ManagePantryStaplesModal, CastRecipeModal
+│       └── types/           # recipe.ts (ingredient-aware search), shoppingList.ts, mealPlan.ts (Mon–Sun dates)
 ├── examples/
 │   ├── Caddyfile.dev        # Standalone local HTTPS proxy (:8443, admin off, no :80 redirects)
 │   ├── Caddyfile.example    # Production & dev blocks for an existing server Caddyfile
@@ -75,7 +86,7 @@ Kiln is a personal cooking web app and offline-capable Android PWA (WebAPK) for 
 # Install Python venv, pip deps, NLTK data (tagger + wordnet), and npm deps
 make install
 
-# Run Django unit + E2E tests (50 tests) AND TypeScript typecheck
+# Run Django unit + E2E tests AND TypeScript typecheck
 make test
 
 # Apply SQLite migrations safely (preserves existing ./data/kiln.db)
@@ -102,8 +113,9 @@ PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev
 **Starting dev servers as an AI agent:**
 - Always launch `dev-api` and `dev-web` as **two separate background daemon tasks** (`IsDaemon: true`, outside the sandbox so host Caddy on `localhost:8090`/`8091` can reach them and Django can fetch recipe URLs / cast on LAN).
 - Keeping them as separate tasks gives independent logs and lets you inspect or restart Django without interrupting Vite (and vice versa).
-- Dev backend runs on `:8091` and Vite dev server on `:8090` (ports `8080`/`8081` may already be in use on the host).
-- Production/local user data lives in `./data/kiln.db` and `./data/images/` (both gitignored — **never delete or wipe `./data/kiln.db`**).
+- Dev backend runs on `:8091` and Vite dev server on `:8090` (behind host Caddy at `https://kiln-dev.woodsfamily.net`; ports `8080`/`8081` may already be in use on the host).
+- Production runs via Docker Compose at `/srv/kiln/docker-compose.yml` (port `8092`, behind host Caddy at `https://kiln.woodsfamily.net`, with persistent data in `/srv/kiln/data`).
+- Local/dev user data lives in `./data/kiln.db` and `./data/images/` (both gitignored — **never delete or wipe `./data/kiln.db`**).
 
 ---
 
@@ -155,17 +167,28 @@ Kiln is used primarily on vertical phones (360–430px viewports, one-handed tou
 5. **Nest Hub Casting (`api/services/caster.py` & `api/templates/api/cast_view.html`):**
    - Uses `DashCastController` (`APP_DASHCAST = "84912283"`, `force=True`) pointing at self-contained server-rendered HTML (`GET /api/cast/recipes/:id/view`).
    - **Do NOT load CAF v3 `cast_receiver_framework.js`** inside DashCast's v2 receiver — it disables Nest Hub touch input. Keep the touch-safe silent WAV loop (`/api/cast/silence.wav`, `pointer-events: none`) + Screen Wake Lock + 1-hour inactivity auto-release.
-6. **Offline PWA & IndexedDB (`web/src/offline/`):**
+6. **Offline PWA, IndexedDB & Android Back Handling (`web/src/offline/`, `web/src/hooks/`):**
    - When adding a new IndexedDB object store in `web/src/offline/store.ts`, **increment `DB_VERSION`** (currently `2`).
    - In `web/vite.config.ts`, keep `navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//]` so Workbox never intercepts Cast views, bookmarklet POSTs, or Django Admin.
    - `share_target` in `manifest` uses `GET /recipes` (`share_title`, `share_text`, `share_url`); `RecipesPage` extracts URLs from either `share_url` or `share_text`.
-7. **Recipe importing & gated sites:**
+   - Keep `overscroll-behavior-y: none` to prevent accidental pull-to-refresh inside the installed Android WebAPK (manual reload lives behind the **Force Refresh** button in the sync popover in `App.tsx`).
+   - Keep Android/PWA hardware Back navigation wired through `useBackToClose` / `usePwaBackGuard` (`ModalSheet` registers this automatically).
+7. **Recipe importing, manual entry, editing & search:**
    - `ImportDraftStore.get()` is intentionally non-destructive (TTL-based) so React 19 StrictMode double-mounts don't consume a draft token before rendering.
-8. **Meal planning dates:**
+   - Manual recipes (`POST /api/recipes` with empty `source_url`), photo-extracted recipes (cover photo intentionally empty by default), and recipe editing (`PUT /api/recipes/:id`) share local photo uploads (`POST /api/images/upload` → `ImageStore.save_bytes`) and ingredient Quick Paste & Parse (`POST /api/ingredients/parse`).
+   - Recipe search (`matchesRecipeSearch` / `getMatchingIngredients` in `web/src/types/recipe.ts`) matches multi-word queries across title, description, and `ingredient_names` returned by `GET /api/recipes` — keep `ingredient_names` in the list payload.
+8. **Gemini photo-to-recipe extraction (`api/services/photo_extractor.py` & `POST /api/recipes/import-photo`):**
+   - Always use the current **`google-genai >= 3.2.0` Interactions API** (`client.interactions.create(...)` on `v1`, `store=False`) — never revert to legacy `generate_content` or deprecated `gemini-2.5-*` models.
+   - Structured JSON uses `response_format={"type": "text", "mime_type": "application/json", "schema": ...}` (the old `response_mime_type` field was removed in May 2026); thinking budgets use `generation_config={"thinking_level": "low"}` for `gemini-4-hydrogen` and `"minimal"` for `gemini-3.5-flash-lite`.
+   - Initialize `genai.Client` with `http_options={"retry_options": {"attempts": 1}}` so the SDK's default 4× retry loop does not multiply failover latency on hung or `429` requests.
+   - Requests use `stream=True` with a short per-chunk idle timeout (`PRIMARY_IDLE_TIMEOUT_SECONDS = 15.0`, `FALLBACK_IDLE_TIMEOUT_SECONDS = 30.0`) and a generous wall-clock budget (`TOTAL_EXTRACTION_TIMEOUT_SECONDS = 90.0`) so hung models fail over quickly while large multi-page extractions keep streaming to completion.
+   - A thread-safe module-level `ModelHealthTracker` circuit breaker puts the primary model into cooldown after fallback-eligible failures (**15 min** for timeouts/stalls/`500`/`503`/`504`, **60 min** for `429`/quota/free-tier exhaustion) so follow-up uploads route straight to `gemini-3.5-flash-lite` with zero wasted Free Tier health pings.
+   - On the frontend (`web/src/api/recipes.ts`), compress uploaded photos via `<canvas>` (max `1600px` JPEG `0.82`) and call `/api/recipes/import-photo` with `timeoutMs: 115_000`, `allow502AppError: true`, and `bypassCircuitBreaker: true` so Gemini errors don't trip Kiln's offline PWA circuit breaker.
+9. **Meal planning dates:**
    - Weeks run **Monday–Sunday** and default to **Next Week**.
    - Always use the local-timezone helpers in `web/src/types/mealPlan.ts` (`parseDateISO`, `formatDateISO`, `getMondayOfWeek`) — never `new Date("YYYY-MM-DD")`, which parses as UTC midnight and shifts dates backward in western timezones.
-9. **Django `StatReloader` quirk:**
-   - Making multiple rapid edits to `kiln_project/urls.py` can occasionally race Django's `StatReloader`. If a newly added route returns 404 while `dev-api` is running, run `touch kiln_project/urls.py` (or restart `dev-api`).
+10. **Django `StatReloader` quirk:**
+    - Making multiple rapid edits to `kiln_project/urls.py` can occasionally race Django's `StatReloader`. If a newly added route returns 404 while `dev-api` is running, run `touch kiln_project/urls.py` (or restart `dev-api`).
 
 ---
 
@@ -173,7 +196,7 @@ Kiln is used primarily on vertical phones (360–430px viewports, one-handed tou
 
 - Unit tests are co-located next to the module they cover (`api/services/test_*.py`, `api/views/test_*.py`, `api/test_models.py`).
 - Cross-cutting user flows live in `api/test_e2e.py`.
-- All backend tests run offline in an in-memory SQLite DB with zero external network calls (stub `RecipeImporter`, `Caster`, and HTTP openers via `unittest.mock` or `api/testing_utils.py`).
+- All backend tests run offline in an in-memory SQLite DB with zero external network calls (stub `RecipeImporter`, `PhotoRecipeExtractor` / `ModelHealthTracker`, `Caster`, and HTTP openers via `unittest.mock` or `api/testing_utils.py`).
 - Before finishing any change:
   1. If any UI was added or modified, review it against the **Mobile-First Requirement** checklist above (360–430px portrait layout, no horizontal overflow, `ModalSheet`, touch targets, `pointerdown`, `dvh`/safe areas, anti-zoom inputs).
   2. Run `make test` (all Django tests + `tsc --noEmit`).
