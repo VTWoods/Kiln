@@ -11,6 +11,7 @@ import {
   importRecipeFromPhotos,
   importRecipePreview,
   parseIngredientLines,
+  rotateImage,
   updateRecipe,
   uploadRecipeImage,
 } from "../api/recipes";
@@ -176,6 +177,15 @@ export default function ImportRecipeModal({
   const [candidateImages, setCandidateImages] = useState<string[]>(
     initialPreview?.candidate_images || [],
   );
+  // Pending clockwise rotation (0/90/180/270) of the selected local photo.
+  // The rotated copy is previewed via an object URL and only uploaded on save.
+  const [photoRotation, setPhotoRotation] = useState(0);
+  const [rotatedPhoto, setRotatedPhoto] = useState<{
+    file: File;
+    previewUrl: string;
+  } | null>(null);
+  const [rotatingPhoto, setRotatingPhoto] = useState(false);
+  const rotationRequestRef = useRef(0);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [ingredients, setIngredients] = useState<EditableIngredient[]>(() => {
     if (editingRecipe?.ingredients && editingRecipe.ingredients.length > 0) {
@@ -225,6 +235,49 @@ export default function ImportRecipeModal({
       }
     };
   }, []);
+
+  // Choosing a different photo discards any pending rotation.
+  useEffect(() => {
+    rotationRequestRef.current += 1;
+    setPhotoRotation(0);
+    setRotatedPhoto(null);
+    setRotatingPhoto(false);
+  }, [selectedImage]);
+
+  // Release the rotated preview's object URL when it's replaced or on unmount.
+  useEffect(() => {
+    if (!rotatedPhoto) return;
+    return () => URL.revokeObjectURL(rotatedPhoto.previewUrl);
+  }, [rotatedPhoto]);
+
+  const canRotatePhoto = selectedImage.startsWith("/api/images/");
+
+  const handleRotatePhoto = async (delta: 90 | -90) => {
+    if (!canRotatePhoto) return;
+    const next = (photoRotation + delta + 360) % 360;
+    const requestId = ++rotationRequestRef.current;
+    setError(null);
+    if (next === 0) {
+      setPhotoRotation(0);
+      setRotatedPhoto(null);
+      setRotatingPhoto(false);
+      return;
+    }
+    setRotatingPhoto(true);
+    try {
+      const file = await rotateImage(selectedImage, next);
+      if (requestId !== rotationRequestRef.current) return;
+      setPhotoRotation(next);
+      setRotatedPhoto({ file, previewUrl: URL.createObjectURL(file) });
+    } catch (err: unknown) {
+      if (requestId !== rotationRequestRef.current) return;
+      setError(err instanceof Error ? err.message : "Failed to rotate photo.");
+    } finally {
+      if (requestId === rotationRequestRef.current) {
+        setRotatingPhoto(false);
+      }
+    }
+  };
 
   const handleAddImportPhotos = (e: ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
@@ -473,6 +526,10 @@ export default function ImportRecipeModal({
     setError(null);
     setSaving(true);
     try {
+      let imageUrl = selectedImage.trim();
+      if (photoRotation !== 0 && rotatedPhoto) {
+        imageUrl = await uploadRecipeImage(rotatedPhoto.file);
+      }
       const payload = {
         title: title.trim(),
         description: description.trim(),
@@ -481,7 +538,7 @@ export default function ImportRecipeModal({
         prep_minutes: Math.max(0, prepMinutes),
         cook_minutes: Math.max(0, cookMinutes),
         source_url: sourceUrl.trim(),
-        image_url: selectedImage.trim(),
+        image_url: imageUrl,
         ingredients: ingredients
           .map((ing) => ({
             quantity: ing.quantity.trim(),
@@ -645,7 +702,7 @@ export default function ImportRecipeModal({
           </button>
           <button
             type="submit"
-            disabled={saving || uploadingPhoto}
+            disabled={saving || uploadingPhoto || rotatingPhoto}
             className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-xs hover:bg-amber-700 disabled:opacity-60 sm:flex-initial"
           >
             {saving ? (
@@ -1029,14 +1086,46 @@ export default function ImportRecipeModal({
             </div>
 
             {selectedImage ? (
-              <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100">
+              <div className="relative overflow-hidden rounded-xl border border-stone-200 bg-stone-100">
                 <img
-                  src={selectedImage}
+                  src={rotatedPhoto?.previewUrl ?? selectedImage}
                   alt={title || "Selected recipe preview"}
                   referrerPolicy="no-referrer"
-                  onError={() => markImageFailed(selectedImage)}
+                  onError={() => {
+                    if (!rotatedPhoto) markImageFailed(selectedImage);
+                  }}
                   className="h-44 w-full object-cover sm:h-52"
                 />
+                {canRotatePhoto && (
+                  <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
+                    {rotatingPhoto && (
+                      <span className="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-amber-600" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleRotatePhoto(-90)}
+                      disabled={rotatingPhoto || uploadingPhoto || saving}
+                      aria-label="Rotate photo left"
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-lg text-stone-800 shadow-sm ring-1 ring-stone-300 transition-colors hover:bg-white disabled:opacity-60"
+                    >
+                      ⟲
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRotatePhoto(90)}
+                      disabled={rotatingPhoto || uploadingPhoto || saving}
+                      aria-label="Rotate photo right"
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-lg text-stone-800 shadow-sm ring-1 ring-stone-300 transition-colors hover:bg-white disabled:opacity-60"
+                    >
+                      ⟳
+                    </button>
+                  </div>
+                )}
+                {photoRotation !== 0 && (
+                  <span className="absolute top-2 left-2 rounded-full bg-amber-600/90 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm">
+                    Rotated · applies on save
+                  </span>
+                )}
               </div>
             ) : (
               <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-sm text-stone-500">

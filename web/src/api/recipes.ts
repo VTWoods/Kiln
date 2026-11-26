@@ -277,6 +277,75 @@ export async function importRecipeFromPhotos(
   }
 }
 
+const MAX_ROTATED_IMAGE_DIM = 2400;
+
+/**
+ * Fetches a locally stored recipe photo (`/api/images/...`, same-origin so the
+ * canvas stays untainted) and returns a copy rotated clockwise by `degrees`
+ * (a multiple of 90). Browsers apply EXIF orientation when decoding, so the
+ * output matches what the user sees on screen.
+ */
+export async function rotateImage(src: string, degrees: number): Promise<File> {
+  const turns = (((Math.round(degrees / 90) % 4) + 4) % 4) as 0 | 1 | 2 | 3;
+
+  let res: Response;
+  try {
+    res = await fetch(src, { credentials: "same-origin" });
+  } catch {
+    throw new Error("Could not load the photo to rotate it.");
+  }
+  if (!res.ok) {
+    throw new Error("Could not load the photo to rotate it.");
+  }
+  const sourceBlob = await res.blob();
+
+  const objectUrl = URL.createObjectURL(sourceBlob);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("This photo format can't be rotated in your browser."));
+      el.src = objectUrl;
+    });
+
+    const { naturalWidth: w, naturalHeight: h } = img;
+    if (!w || !h) {
+      throw new Error("This photo format can't be rotated in your browser.");
+    }
+
+    const scale = Math.min(1, MAX_ROTATED_IMAGE_DIM / Math.max(w, h));
+    const drawW = Math.max(1, Math.round(w * scale));
+    const drawH = Math.max(1, Math.round(h * scale));
+    const sideways = turns % 2 === 1;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = sideways ? drawH : drawW;
+    canvas.height = sideways ? drawW : drawH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Rotating photos isn't supported in this browser.");
+    }
+
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((turns * Math.PI) / 2);
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+
+    const keepPng = sourceBlob.type === "image/png" || sourceBlob.type === "image/gif";
+    const outType = keepPng ? "image/png" : "image/jpeg";
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, outType, 0.9),
+    );
+    if (!blob || blob.size === 0) {
+      throw new Error("Failed to rotate photo.");
+    }
+    return new File([blob], `recipe-photo${keepPng ? ".png" : ".jpg"}`, {
+      type: outType,
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function uploadRecipeImage(file: File): Promise<string> {
   const form = new FormData();
   form.append("image", file);
