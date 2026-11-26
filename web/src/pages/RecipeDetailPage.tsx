@@ -13,6 +13,7 @@ import {
   isSafeHttpUrl,
   type Recipe,
 } from "../types/recipe";
+import { getIngredientEmoji } from "../utils/ingredientEmoji";
 
 export default function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -476,6 +477,7 @@ export default function RecipeDetailPage() {
                 const amount = [ing.quantity, ing.unit]
                   .filter(Boolean)
                   .join(" ");
+                const emoji = getIngredientEmoji(ing.name);
                 return (
                   <li key={ing.id} className="first:pt-0">
                     <button
@@ -509,6 +511,17 @@ export default function RecipeDetailPage() {
                             ].join(" ")}
                           >
                             {amount}
+                          </span>
+                        )}
+                        {emoji && (
+                          <span
+                            aria-hidden="true"
+                            className={[
+                              "mr-1 inline-block select-none",
+                              done ? "opacity-50" : "",
+                            ].join(" ")}
+                          >
+                            {emoji}
                           </span>
                         )}
                         <span>{ing.name}</span>

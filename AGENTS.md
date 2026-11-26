@@ -97,13 +97,13 @@ npm --prefix web run build
 
 # Run Django (:8091) and Vite (:8090) as TWO SEPARATE background daemon tasks (preferred for AI agents)
 # Task 1 (Django backend on 0.0.0.0:8091):
-PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev-api
+PUBLIC_BASE_URL=https://kiln-dev.example.com make dev-api
 
 # Task 2 (Vite frontend on 0.0.0.0:8090, HMR over wss:// behind Caddy):
 VITE_HMR_CLIENT_PORT=443 make dev-web
 
 # (For manual single-terminal dev, you can also run both together:)
-PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev
+PUBLIC_BASE_URL=https://kiln-dev.example.com make dev
 
 # Normalize legacy recipe ingredients (and optionally re-merge shopping lists)
 ./.venv/bin/python3 manage.py normalize_recipes --dry-run
@@ -113,8 +113,8 @@ PUBLIC_BASE_URL=https://kiln-dev.woodsfamily.net make dev
 **Starting dev servers as an AI agent:**
 - Always launch `dev-api` and `dev-web` as **two separate background daemon tasks** (`IsDaemon: true`, outside the sandbox so host Caddy on `localhost:8090`/`8091` can reach them and Django can fetch recipe URLs / cast on LAN).
 - Keeping them as separate tasks gives independent logs and lets you inspect or restart Django without interrupting Vite (and vice versa).
-- Dev backend runs on `:8091` and Vite dev server on `:8090` (behind host Caddy at `https://kiln-dev.woodsfamily.net`; ports `8080`/`8081` may already be in use on the host).
-- Production runs via Docker Compose at `/srv/kiln/docker-compose.yml` (port `8092`, behind host Caddy at `https://kiln.woodsfamily.net`, with persistent data in `/srv/kiln/data`).
+- Dev backend runs on `:8091` and Vite dev server on `:8090` (behind a reverse proxy such as Caddy at your dev hostname, e.g. `https://kiln-dev.example.com`; ports `8080`/`8081` may already be in use on the host).
+- Production runs via Docker Compose (see `examples/docker-compose.yml` and `examples/Caddyfile.example`, e.g. behind Caddy at `https://kiln.example.com`).
 - Local/dev user data lives in `./data/kiln.db` and `./data/images/` (both gitignored — **never delete or wipe `./data/kiln.db`**).
 
 ---
@@ -185,7 +185,7 @@ Kiln is used primarily on vertical phones (360–430px viewports, one-handed tou
    - A thread-safe module-level `ModelHealthTracker` circuit breaker puts the primary model into cooldown after fallback-eligible failures (**15 min** for timeouts/stalls/`500`/`503`/`504`, **60 min** for `429`/quota/free-tier exhaustion) so follow-up uploads route straight to `gemini-3.5-flash-lite` with zero wasted Free Tier health pings.
    - On the frontend (`web/src/api/recipes.ts`), compress uploaded photos via `<canvas>` (max `1600px` JPEG `0.82`) and call `/api/recipes/import-photo` with `timeoutMs: 115_000`, `allow502AppError: true`, and `bypassCircuitBreaker: true` so Gemini errors don't trip Kiln's offline PWA circuit breaker.
 9. **Meal planning dates:**
-   - Weeks run **Monday–Sunday** and default to **Next Week**.
+   - Weeks run **Monday–Sunday** and default to **Current Week**.
    - Always use the local-timezone helpers in `web/src/types/mealPlan.ts` (`parseDateISO`, `formatDateISO`, `getMondayOfWeek`) — never `new Date("YYYY-MM-DD")`, which parses as UTC midnight and shifts dates backward in western timezones.
 10. **Django `StatReloader` quirk:**
     - Making multiple rapid edits to `kiln_project/urls.py` can occasionally race Django's `StatReloader`. If a newly added route returns 404 while `dev-api` is running, run `touch kiln_project/urls.py` (or restart `dev-api`).
@@ -202,4 +202,27 @@ Kiln is used primarily on vertical phones (360–430px viewports, one-handed tou
   2. Run `make test` (all Django tests + `tsc --noEmit`).
   3. Run `npm --prefix web run build` if any frontend files changed.
   4. Run `make migrate` if any new migration was added.
-  5. Do not commit or push unless the user asks.
+  5. Run the **Public Repository & Privacy Hygiene** check below before committing or pushing.
+  6. Do not commit or push unless the user asks.
+
+---
+
+## 7. Public Repository & Privacy Hygiene
+
+This repository is **public**. Every developer and AI agent **MUST** ensure no personal, secret, or host-specific information is ever committed to git:
+
+- **Never commit secrets or credentials:** API keys/tokens (`GEMINI_API_KEY`, `AIza...`, OAuth tokens, passwords, production `DJANGO_SECRET_KEY`), `.env` / `.env.*` files, TLS private keys/certs (`*.pem`, `*.key`, `*.crt`).
+- **Never commit personal domains, URLs, or hostnames:** Always use RFC 2606 placeholders (`kiln.example.com`, `kiln-dev.example.com`, `example.com`) or `localhost` in docs, configs, examples, and tests — never a real personal domain.
+- **Never commit real LAN IPs, device names, or host paths:** Use RFC 5737 documentation IPs (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) or generic placeholders in tests and examples. Never commit real home LAN IPs, real Nest Hub / Chromecast device names, personal emails/usernames, or machine-specific paths (`/home/<user>/...`, `/Users/<user>/...`, `/srv/...`).
+- **Never commit user data:** `./data/kiln.db`, `./data/images/`, SQLite journals (`*.db-wal`, `*.db-shm`, `*.sqlite3`), or personal recipe exports must stay gitignored and untouched on disk.
+
+### Pre-Commit Privacy Checklist
+Before committing or pushing, inspect `git status` and `git diff --cached` (or run the quick scan below) to verify none of the above slipped in:
+
+```bash
+# 1. Confirm no ignored/data/env files are staged or tracked
+git status --short
+
+# 2. Scan staged changes for secrets, private paths, personal domains, or real LAN IPs
+git diff --cached | grep -inE "AIza[0-9A-Za-z_-]{20,}|GEMINI_API_KEY=.+|DJANGO_SECRET_KEY=.+|/home/|/Users/|/srv/|192\.168\.|10\.[0-9]+\.[0-9]+\.|172\.(1[6-9]|2[0-9]|3[01])\." || true
+```

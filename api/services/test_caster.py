@@ -15,13 +15,13 @@ class CasterServiceTests(SimpleTestCase):
     def test_resolve_cast_url(self) -> None:
         self.assertEqual(
             resolve_cast_url(
-                "http://localhost:8090/api/cast/recipes/4/view", "", "10.0.0.176"
+                "http://localhost:8090/api/cast/recipes/4/view", "", "192.0.2.10"
             ),
-            "http://10.0.0.176:8090/api/cast/recipes/4/view",
+            "http://192.0.2.10:8090/api/cast/recipes/4/view",
         )
         self.assertEqual(
             resolve_cast_url(
-                "http://192.168.1.25:8090/api/cast/recipes/4/view", "", "10.0.0.176"
+                "http://192.168.1.25:8090/api/cast/recipes/4/view", "", "192.0.2.10"
             ),
             "http://192.168.1.25:8090/api/cast/recipes/4/view",
         )
@@ -29,12 +29,12 @@ class CasterServiceTests(SimpleTestCase):
             resolve_cast_url(
                 "http://localhost:8090/api/cast/recipes/4/view",
                 "https://kiln.home.arpa",
-                "10.0.0.176",
+                "192.0.2.10",
             ),
             "https://kiln.home.arpa/api/cast/recipes/4/view",
         )
         with self.assertRaises(InvalidCastTargetError):
-            resolve_cast_url("not-a-url", "", "10.0.0.176")
+            resolve_cast_url("not-a-url", "", "192.0.2.10")
 
     def test_discover_sorts_displays_first_and_stops_browser(self) -> None:
         speaker = MagicMock(
@@ -65,6 +65,6 @@ class CasterServiceTests(SimpleTestCase):
     def test_cast_url_validates_host(self) -> None:
         caster = PyChromecastCaster()
         with self.assertRaises(InvalidCastTargetError):
-            caster.cast_url("", 8009, "http://10.0.0.176:8090/api/cast/recipes/1/view")
+            caster.cast_url("", 8009, "http://192.0.2.10:8090/api/cast/recipes/1/view")
         with self.assertRaises(InvalidCastTargetError):
             caster.stop("", 8009)

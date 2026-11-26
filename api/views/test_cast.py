@@ -71,7 +71,7 @@ class CastViewTests(TestCase):
                     {
                         "host": "10.0.0.42",
                         "port": 8009,
-                        "base_url": "http://10.0.0.176:8090",
+                        "base_url": "http://192.0.2.10:8090",
                     }
                 ),
                 content_type="application/json",
@@ -79,7 +79,7 @@ class CastViewTests(TestCase):
             self.assertEqual(cast_res.status_code, 200)
             self.assertEqual(
                 stub.last_url,
-                f"http://10.0.0.176:8090/api/cast/recipes/{recipe.id}/view",
+                f"http://192.0.2.10:8090/api/cast/recipes/{recipe.id}/view",
             )
 
             stop_res = self.client.post(

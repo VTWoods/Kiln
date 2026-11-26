@@ -7,16 +7,22 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite3
 /data/
+data/
 
 # Frontend dependencies & build output
 web/node_modules/
 web/dist/
 web/dev-dist/
 
-# Environment & editor files
+# Environment, secrets & editor files
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
 .DS_Store
 *.swp
 .idea/

@@ -337,7 +337,7 @@ class NestHubCastSmokeTests(TestCase):
                         {
                             "host": hub["host"],
                             "port": hub["port"],
-                            "base_url": "http://10.0.0.176:8090",
+                            "base_url": "http://192.0.2.10:8090",
                         }
                     ),
                     content_type="application/json",

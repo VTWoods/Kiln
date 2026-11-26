@@ -29,9 +29,18 @@ import {
   type ShoppingList,
   type ShoppingListItem,
 } from "../types/shoppingList";
+import { getIngredientEmoji } from "../utils/ingredientEmoji";
 
 const CHECK_FADE_DELAY_MS = 2500;
 const CHECK_MOVE_DELAY_MS = 3000;
+
+function isFinePointer(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: fine)").matches
+  );
+}
 
 export default function ShoppingListsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -755,7 +764,7 @@ export default function ShoppingListsPage() {
           <input
             type="text"
             required
-            autoFocus
+            autoFocus={isFinePointer()}
             placeholder={`List name (e.g., ${defaultShoppingListName()})`}
             value={newListName}
             onChange={(e) => setNewListName(e.target.value)}
@@ -1071,7 +1080,7 @@ export default function ShoppingListsPage() {
                                     toggleGroupCollapsed(collapseKey)
                                   }
                                   aria-expanded={!isCollapsed}
-                                  className="sticky top-[var(--app-header-h,61px)] z-10 mb-1 flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-lg bg-stone-100/95 px-2.5 py-2.5 text-left shadow-2xs backdrop-blur-xs transition-colors hover:bg-stone-200/90"
+                                  className="sticky top-[var(--app-header-h,61px)] z-10 mb-1 flex min-h-[44px] w-full min-w-0 cursor-pointer select-none touch-manipulation items-center justify-between gap-2 rounded-lg bg-stone-100/95 px-2.5 py-2.5 text-left shadow-2xs backdrop-blur-xs transition-colors hover:bg-stone-200/90"
                                 >
                                   <span className="flex min-w-0 flex-1 items-center gap-1.5">
                                     <span
@@ -1135,7 +1144,7 @@ export default function ShoppingListsPage() {
                                     }
                                     aria-expanded={!isCollapsed}
                                     title={group.label}
-                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2.5 py-2.5 text-left"
+                                    className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer select-none touch-manipulation items-center gap-1.5 px-2.5 py-2.5 text-left"
                                   >
                                     <span
                                       aria-hidden="true"
@@ -1215,7 +1224,7 @@ export default function ShoppingListsPage() {
                               type="button"
                               onClick={() => toggleGroupCollapsed("checked")}
                               aria-expanded={!checkedCollapsed}
-                              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-stone-100"
+                              className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer select-none touch-manipulation items-center gap-1.5 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-stone-100"
                             >
                               <span
                                 aria-hidden="true"
@@ -1344,6 +1353,7 @@ function ShoppingListItemRow({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [openUpward, setOpenUpward] = useState(false);
   const amount = [item.quantity, item.unit].filter(Boolean).join(" ");
+  const emoji = getIngredientEmoji(item.name);
   const currentAisle = item.aisle || "Other";
   const isSettledChecked = item.checked && !pendingCheck;
   const isGrayed = pendingCheck || isSettledChecked;
@@ -1353,6 +1363,8 @@ function ShoppingListItemRow({
       : item.recipe_id && item.recipe_title
         ? [{ id: item.recipe_id, title: item.recipe_title }]
         : [];
+  const hasRecipeChips = showRecipeChips && recipeChips.length > 0;
+  const showInlineAisleBadge = showAisleChip && !hasRecipeChips;
 
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current) return;
@@ -1384,7 +1396,7 @@ function ShoppingListItemRow({
   return (
     <li
       className={[
-        "flex min-w-0 items-start justify-between gap-1 transition-all duration-500",
+        "flex min-w-0 items-start justify-between gap-1.5 py-0.5 transition-all duration-500",
         menuOpen ? "relative z-20" : "",
         fadingOut
           ? "scale-[0.98] opacity-0"
@@ -1394,45 +1406,80 @@ function ShoppingListItemRow({
       ].join(" ")}
     >
       <div className="min-w-0 flex-1">
-        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 py-3 active:bg-stone-50">
+        <label
+          htmlFor={`shopping-item-${item.id}`}
+          className="flex min-h-[52px] min-w-0 flex-1 cursor-pointer select-none touch-manipulation items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-stone-50 active:bg-amber-50/70"
+        >
           <input
             id={`shopping-item-${item.id}`}
             type="checkbox"
             checked={item.checked}
             onChange={() => onToggle(item)}
-            className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer rounded border-stone-300 accent-amber-600"
+            className="peer sr-only"
           />
 
           <span
+            aria-hidden="true"
             className={[
-              "min-w-0 flex-1 text-[15px] leading-snug break-words transition-colors duration-300 sm:text-sm",
-              isSettledChecked
-                ? "text-stone-400 line-through"
-                : pendingCheck
-                  ? "text-stone-400"
-                  : "text-stone-900",
+              "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500 peer-focus-visible:ring-offset-2",
+              item.checked
+                ? "border-amber-600 bg-amber-600 text-white"
+                : "border-stone-300 bg-white text-transparent",
             ].join(" ")}
           >
-            {amount && (
-              <span
-                className={[
-                  "mr-1.5 font-semibold transition-colors duration-300",
-                  isGrayed ? "text-stone-400" : "text-amber-800",
-                ].join(" ")}
-              >
-                {amount}
-              </span>
-            )}
-            {item.name}
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              className="h-3.5 w-3.5"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+            </svg>
           </span>
-        </label>
 
-        {((showRecipeChips && recipeChips.length > 0) || showAisleChip) && (
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5 pb-3 pl-8">
-            {showAisleChip && (
+          {emoji && (
+            <span
+              aria-hidden="true"
+              className={[
+                "shrink-0 select-none text-lg leading-none transition-opacity duration-300 sm:text-base",
+                isGrayed ? "opacity-50" : "opacity-100",
+              ].join(" ")}
+            >
+              {emoji}
+            </span>
+          )}
+
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <span
+              className={[
+                "min-w-0 text-[15px] leading-snug break-words transition-colors duration-300 sm:text-sm",
+                isSettledChecked
+                  ? "text-stone-400 line-through"
+                  : pendingCheck
+                    ? "text-stone-400"
+                    : "text-stone-900",
+              ].join(" ")}
+            >
+              {amount && (
+                <span
+                  className={[
+                    "mr-1.5 font-semibold transition-colors duration-300",
+                    isGrayed ? "text-stone-400" : "text-amber-800",
+                  ].join(" ")}
+                >
+                  {amount}
+                </span>
+              )}
+              {item.name}
+            </span>
+
+            {showInlineAisleBadge && (
               <span
                 className={[
-                  "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  "inline-block max-w-full self-start truncate rounded-full px-2 py-0.5 text-[11px] font-medium",
                   isGrayed
                     ? "bg-stone-100 text-stone-400"
                     : "bg-stone-100 text-stone-600",
@@ -1441,34 +1488,58 @@ function ShoppingListItemRow({
                 {currentAisle}
               </span>
             )}
-            {showRecipeChips &&
-              recipeChips.map((recipe) => (
-                <Link
-                  key={recipe.id}
-                  to={`/recipes/${recipe.id}`}
-                  title={recipe.title}
-                  className={[
-                    "block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors sm:max-w-xs",
-                    isGrayed
-                      ? "bg-stone-100 text-stone-400 hover:bg-stone-200"
-                      : "bg-amber-50 text-amber-800 hover:bg-amber-100",
-                  ].join(" ")}
-                >
-                  {recipe.title}
-                </Link>
-              ))}
+          </span>
+        </label>
+
+        {hasRecipeChips && (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 pt-0.5 pr-2 pb-2.5 pl-11">
+            {showAisleChip && (
+              <span
+                className={[
+                  "inline-flex min-h-[28px] max-w-full items-center truncate rounded-full px-2.5 py-0.5 text-xs font-medium",
+                  isGrayed
+                    ? "bg-stone-100 text-stone-400"
+                    : "bg-stone-100 text-stone-600",
+                ].join(" ")}
+              >
+                {currentAisle}
+              </span>
+            )}
+            {recipeChips.map((recipe) => (
+              <Link
+                key={recipe.id}
+                to={`/recipes/${recipe.id}`}
+                title={recipe.title}
+                onClick={(e) => e.stopPropagation()}
+                className={[
+                  "inline-flex min-h-[28px] max-w-full touch-manipulation items-center truncate rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors sm:max-w-xs",
+                  isGrayed
+                    ? "bg-stone-100 text-stone-400 hover:bg-stone-200"
+                    : "bg-amber-50 text-amber-800 hover:bg-amber-100 active:bg-amber-200/70",
+                ].join(" ")}
+              >
+                {recipe.title}
+              </Link>
+            ))}
           </div>
         )}
       </div>
 
-      <div className="relative shrink-0 pt-1" ref={menuRef}>
+      <div
+        className="relative shrink-0 pt-1"
+        ref={menuRef}
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           type="button"
-          onClick={onToggleMenu}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMenu();
+          }}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-label={`Actions for ${item.name}`}
-          className="-mr-1.5 inline-flex h-10 w-10 items-center justify-center rounded-lg text-lg font-semibold text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 active:bg-stone-100"
+          className="inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl text-lg font-semibold text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 active:bg-stone-200/70 sm:h-10 sm:w-10"
         >
           ⋮
         </button>
@@ -1496,7 +1567,7 @@ function ShoppingListItemRow({
                     onChangeAisle(item, e.target.value);
                     onCloseMenu();
                   }}
-                  className="w-full cursor-pointer rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 text-base font-medium text-stone-800 focus:border-amber-500 focus:bg-white focus:outline-none sm:py-1.5 sm:text-xs"
+                  className="min-h-[44px] w-full cursor-pointer rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 text-base font-medium text-stone-800 focus:border-amber-500 focus:bg-white focus:outline-none sm:min-h-0 sm:py-1.5 sm:text-xs"
                 >
                   {aisles.map((aisle) => (
                     <option key={aisle} value={aisle}>
@@ -1515,7 +1586,7 @@ function ShoppingListItemRow({
                 onDelete(item);
               }}
               className={[
-                "block min-h-[40px] w-full rounded-lg px-2.5 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50 sm:min-h-0 sm:py-2 sm:text-xs",
+                "block min-h-[44px] w-full touch-manipulation rounded-lg px-2.5 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50 sm:min-h-0 sm:py-2 sm:text-xs",
                 !item.checked ? "mt-1" : "",
               ].join(" ")}
             >

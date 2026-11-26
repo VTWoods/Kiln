@@ -40,11 +40,11 @@ export default function MealPlanPage() {
   const thisWeekStart = getThisWeekMonday();
   const nextWeekStart = getNextWeekMonday();
 
-  // Default to planning next week (Monday-Sunday) unless ?week=YYYY-MM-DD is specified
+  // Default to the current week (Monday-Sunday) unless ?week=YYYY-MM-DD is specified
   const paramWeek = searchParams.get("week")?.trim() || "";
   const initialWeekStart = /^\d{4}-\d{2}-\d{2}$/.test(paramWeek)
     ? formatDateISO(getMondayOfWeek(parseDateISO(paramWeek)))
-    : nextWeekStart;
+    : thisWeekStart;
 
   const [weekStart, setWeekStart] = useState<string>(initialWeekStart);
   const [entries, setEntries] = useState<MealPlanEntry[]>([]);
@@ -162,7 +162,7 @@ export default function MealPlanPage() {
     setWeekStart(mondayISO);
     setAddingForDate(null);
     setOpenMenuEntryId(null);
-    if (mondayISO === nextWeekStart) {
+    if (mondayISO === thisWeekStart) {
       setSearchParams({}, { replace: true });
     } else {
       setSearchParams({ week: mondayISO }, { replace: true });
